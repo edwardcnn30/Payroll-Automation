@@ -10,6 +10,10 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# Handle query parameters for seamless top-navbar routing
+query_params = st.query_params
+current_nav = query_params.get("nav", "home")
+
 # --- Custom Styling & Theme Matching the Reference UI ---
 st.markdown("""
     <style>
@@ -57,7 +61,7 @@ st.markdown("""
             font-weight: 500;
             transition: color 0.2s ease;
         }
-        .nav-link:hover, .nav-link.active {
+        .nav-link:hover {
             color: #ffffff;
         }
 
@@ -115,36 +119,16 @@ st.markdown("""
             transform: translateY(-2px);
             box-shadow: 0 6px 20px rgba(249, 115, 22, 0.5);
         }
-
-        /* Custom Tabs Styling */
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 12px;
-            background-color: transparent;
-        }
-        .stTabs [data-baseweb="tab"] {
-            background-color: rgba(17, 24, 39, 0.6);
-            border-radius: 8px;
-            color: #9ca3af;
-            font-weight: 600;
-            padding: 10px 20px;
-            border: 1px solid rgba(255, 255, 255, 0.06);
-        }
-        .stTabs [aria-selected="true"] {
-            background: linear-gradient(135deg, #f97316 0%, #ea580c 100%) !important;
-            color: white !important;
-            border: none !important;
-        }
     </style>
 
     <!-- Top Navigation Bar HTML -->
     <div class="top-navbar">
-        <a href="#" class="nav-brand">💼 Payroll Studio</a>
+        <a href="?nav=home" class="nav-brand">💼 Payroll Studio</a>
         <div class="nav-links">
-            <a href="#" class="nav-link active">Home</a>
-            <a href="#" class="nav-link">Upload Data</a>
-            <a href="#" class="nav-link">Interactive Editor</a>
-            <a href="#" class="nav-link">Export Center</a>
-            <a href="#" class="nav-link">Developer Support</a>
+            <a href="?nav=home" class="nav-link">Home</a>
+            <a href="?nav=upload" class="nav-link">Upload Data</a>
+            <a href="?nav=export" class="nav-link">Export Center</a>
+            <a href="mailto:cunananmarkedward2330@gmail.com" class="nav-link">Developer Support</a>
         </div>
     </div>
 """, unsafe_allow_html=True)
@@ -394,92 +378,114 @@ def process_raw_payroll(uploaded_file):
     return df_paychex[columns_order]
 
 
-# --- HERO HEADER MATCHING REFERENCE IMAGE ---
-st.markdown("""
-    <div class="hero-container">
-        <h1 class="hero-title">
-            Everything You Need to <span class="orange">Start</span>, <span class="orange">Get Hired</span>, and <span class="yellow">Thrive</span> as a Payroll Professional
-        </h1>
-        <p class="hero-subtitle">
-            Transform raw operational exports into sleek, verified, Paychex-ready statements instantly. Perform direct live edits and handle custom adjustments seamlessly.
-        </p>
-    </div>
-""", unsafe_allow_html=True)
+# Maintain file state across page route switches
+if "uploaded_file" not in st.session_state:
+    st.session_state["uploaded_file"] = None
 
-# --- MAIN INTERACTIVE WORKSPACE TABS ---
-tab1, tab2 = st.tabs(["📁 Upload & Transform Data", "✏️ Interactive Editor & Export"])
+# --- ROUTING SCREENS ---
 
-with tab1:
+if current_nav == "home":
     st.markdown("""
-        <div class="custom-card">
-            <h3>Upload Raw Payroll Spreadsheet</h3>
-            <p style="color: #9ca3af; font-size: 0.95rem;">Upload your Excel export below (.xls or .xlsx formats supported) to run calculations and PRN allocations automatically.</p>
+        <div class="hero-container">
+            <h1 class="hero-title">
+                Everything You Need to <span class="orange">Start</span>, <span class="orange">Get Hired</span>, and <span class="yellow">Thrive</span> as a Payroll Professional
+            </h1>
+            <p class="hero-subtitle">
+                Transform raw operational exports into sleek, verified, Paychex-ready statements instantly. Perform direct live edits and handle custom adjustments seamlessly.
+            </p>
         </div>
     """, unsafe_allow_html=True)
 
-    uploaded_file = st.file_uploader("Upload Raw Excel Export", type=["xls", "xlsx"], label_visibility="collapsed")
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("🚀 Upload Data & Get Started", use_container_width=True):
+            st.query_params["nav"] = "upload"
+            st.rerun()
 
-with tab2:
-    if 'uploaded_file' in locals() and uploaded_file is not None:
-        pass
+elif current_nav == "upload":
+    st.markdown("""
+        <div class="hero-container" style="padding-bottom: 1rem;">
+            <h1 style="font-size: 2.2rem; font-weight: 800; color: white;">📁 Upload Data Workspace</h1>
+            <p class="hero-subtitle">Select or drag-and-drop your raw payroll spreadsheet (.xls or .xlsx) from your file manager below.</p>
+        </div>
+    """, unsafe_allow_html=True)
 
-# Processing logic execution whenever file is active
-if uploaded_file is not None:
-    with st.spinner("✨ Processing calculations and structuring export..."):
-        df_result = process_raw_payroll(uploaded_file)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+        uploaded_file = st.file_uploader("Upload Raw Excel Export", type=["xls", "xlsx"])
+        if uploaded_file is not None:
+            st.session_state["uploaded_file"] = uploaded_file
+            st.success("File uploaded successfully! Click below to process and view in the Export Center.")
+            if st.button("➡️ Go to Export Center & Editor", use_container_width=True):
+                st.query_params["nav"] = "export"
+                st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    if df_result is not None and not df_result.empty:
-        st.markdown("""
-            <div class="custom-card">
-                <h3>✏️ Live Payroll Editor & Verification Table</h3>
-                <p style="color: #9ca3af; font-size: 0.9rem; margin-bottom: 1rem;">Directly edit any cell value or add manual email timesheets/mileages below before downloading your final CSV file.</p>
-            </div>
-        """, unsafe_allow_html=True)
+elif current_nav == "export":
+    st.markdown("""
+        <div class="hero-container" style="padding-bottom: 1rem;">
+            <h1 style="font-size: 2.2rem; font-weight: 800; color: white;">📥 Export Center & Interactive Editor</h1>
+            <p class="hero-subtitle">Review calculations, make live table edits, and download your final Paychex import file.</p>
+        </div>
+    """, unsafe_allow_html=True)
 
-        edited_df = st.data_editor(df_result, num_rows="dynamic", use_container_width=True, key="payroll_editor")
+    if st.session_state["uploaded_file"] is not None:
+        with st.spinner("✨ Processing calculations and structuring export..."):
+            df_result = process_raw_payroll(st.session_state["uploaded_file"])
 
-        # Summary Metrics Cards
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.markdown(f"""
-                <div class="custom-card" style="text-align: center; padding: 1rem;">
-                    <div style="font-size: 0.8rem; color: #9ca3af; text-transform: uppercase;">Total Entries</div>
-                    <div style="font-size: 1.8rem; font-weight: 700; color: #f97316; margin-top: 0.2rem;">{len(edited_df)}</div>
-                </div>
+        if df_result is not None and not df_result.empty:
+            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+            edited_df = st.data_editor(df_result, num_rows="dynamic", use_container_width=True, key="payroll_editor")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            # Summary Metrics Cards
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown(f"""
+                    <div class="custom-card" style="text-align: center; padding: 1rem;">
+                        <div style="font-size: 0.8rem; color: #9ca3af; text-transform: uppercase;">Total Entries</div>
+                        <div style="font-size: 1.8rem; font-weight: 700; color: #f97316; margin-top: 0.2rem;">{len(edited_df)}</div>
+                    </div>
+                """, unsafe_allow_html=True)
+            with col2:
+                hourly_count = len(edited_df[edited_df['Pay Component'] == 'Hourly'])
+                st.markdown(f"""
+                    <div class="custom-card" style="text-align: center; padding: 1rem;">
+                        <div style="font-size: 0.8rem; color: #9ca3af; text-transform: uppercase;">Hourly Entries</div>
+                        <div style="font-size: 1.8rem; font-weight: 700; color: #eab308; margin-top: 0.2rem;">{hourly_count}</div>
+                    </div>
+                """, unsafe_allow_html=True)
+            with col3:
+                special_count = len(edited_df[edited_df['Pay Component'].isin(['PRN Points', 'MILEAGE REIMB'])])
+                st.markdown(f"""
+                    <div class="custom-card" style="text-align: center; padding: 1rem;">
+                        <div style="font-size: 0.8rem; color: #9ca3af; text-transform: uppercase;">PRN / Mileage</div>
+                        <div style="font-size: 1.8rem; font-weight: 700; color: #60a5fa; margin-top: 0.2rem;">{special_count}</div>
+                    </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown("""
+                <div class="custom-card" style="margin-top: 2rem; text-align: center;">
+                    <h3>Download Final Import File</h3>
+                    <p style="color: #9ca3af; font-size: 0.95rem; margin-bottom: 1rem;">Export your verified Paychex CSV file incorporating all manual adjustments.</p>
             """, unsafe_allow_html=True)
-        with col2:
-            hourly_count = len(edited_df[edited_df['Pay Component'] == 'Hourly'])
-            st.markdown(f"""
-                <div class="custom-card" style="text-align: center; padding: 1rem;">
-                    <div style="font-size: 0.8rem; color: #9ca3af; text-transform: uppercase;">Hourly Entries</div>
-                    <div style="font-size: 1.8rem; font-weight: 700; color: #eab308; margin-top: 0.2rem;">{hourly_count}</div>
-                </div>
-            """, unsafe_allow_html=True)
-        with col3:
-            special_count = len(edited_df[edited_df['Pay Component'].isin(['PRN Points', 'MILEAGE REIMB'])])
-            st.markdown(f"""
-                <div class="custom-card" style="text-align: center; padding: 1rem;">
-                    <div style="font-size: 0.8rem; color: #9ca3af; text-transform: uppercase;">PRN / Mileage</div>
-                    <div style="font-size: 1.8rem; font-weight: 700; color: #60a5fa; margin-top: 0.2rem;">{special_count}</div>
-                </div>
-            """, unsafe_allow_html=True)
 
-        st.markdown("""
-            <div class="custom-card" style="margin-top: 2rem;">
-                <h3>📥 Download Final Import File</h3>
-                <p style="color: #9ca3af; font-size: 0.95rem; margin-bottom: 1rem;">Export your verified Paychex CSV file including all your live adjustments and manual inputs.</p>
-            </div>
-        """, unsafe_allow_html=True)
-
-        csv_data = edited_df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="🚀 Download Paychex-Ready CSV",
-            data=csv_data,
-            file_name="Paychex_Final_Import.csv",
-            mime="text/csv",
-            type="primary"
-        )
+            csv_data = edited_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="🚀 Download Paychex-Ready CSV",
+                data=csv_data,
+                file_name="Paychex_Final_Import.csv",
+                mime="text/csv",
+                type="primary"
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.error("⚠️ No valid payroll records could be parsed. Please check your source file formatting.")
     else:
-        st.error("⚠️ No valid payroll records could be parsed. Please check your source file formatting.")
-else:
-    st.info("👆 Please upload your payroll spreadsheet file in the **'Upload & Transform Data'** tab above to begin.")
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.warning("⚠️ No payroll file has been uploaded yet.")
+            if st.button("📁 Go to Upload Data", use_container_width=True):
+                st.query_params["nav"] = "upload"
+                st.rerun()
