@@ -1,304 +1,235 @@
-import pandas as pd
 import streamlit as st
-import io
+import pandas as pd
+import openpyxl
+import re
 
-# Set page configuration
+# Page Configuration & Modern Styling
 st.set_page_config(
-    page_title="Payroll Automation Dashboard",
-    page_icon="💼",
-    layout="wide"
+    page_title="Payroll & Email Automation Hub",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
+# Custom CSS for a sleek, modern, and interactive UI
+st.markdown("""
+    <style>
+        /* Main background & font styling */
+        .main {
+            background-color: #0e1117;
+        }
 
-def process_raw_payroll(uploaded_file):
-    xls = pd.ExcelFile(uploaded_file)
-    client_id = 16068715
-    sheet_mapping = {s.strip().upper(): s for s in xls.sheet_names}
+        /* Modern Header Banner */
+        .hero-banner {
+            padding: 2.5rem 2rem;
+            background: linear-gradient(135deg, #1f4068 0%, #162447 50%, #1b1b2f 100%);
+            border-radius: 16px;
+            color: #ffffff;
+            margin-bottom: 2rem;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .hero-banner h1 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.5px;
+        }
+        .hero-banner p {
+            font-size: 1.1rem;
+            color: #a0aec0;
+            margin-bottom: 0;
+        }
 
-    # Explicit list of PRN Worker IDs
-    prn_employee_ids = {
-        1206, 1349, 1199, 1318, 1414, 1458, 1387, 1466, 1267, 1351,
-        1246, 1123, 1159, 910, 1391, 1175, 877, 1242, 1334, 980,
-        1096, 1237, 1259, 1294, 1208, 1418, 1207, 1184, 1417, 1428,
-        1185, 1308, 1276, 1330, 1268, 1247
-    }
+        /* Modern Card Containers */
+        .custom-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+        }
 
-    # Locate the primary raw data export sheet
-    target_sheet = None
-    for key, name in sheet_mapping.items():
-        if any(k in key for k in ['EXPORT', 'DATA', 'RAW', 'VISIT', 'HOURS', 'MAIN']):
-            target_sheet = name
-            break
+        /* Metric / Status Highlights */
+        .metric-pill {
+            display: inline-block;
+            background: rgba(49, 130, 206, 0.2);
+            color: #63b3ed;
+            padding: 0.4rem 1rem;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            border: 1px solid rgba(99, 179, 237, 0.3);
+            margin-bottom: 1rem;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
-    if not target_sheet:
-        target_sheet = xls.sheet_names[0]
+# --- SIDEBAR: NAVIGATION & CONTACT ---
+with st.sidebar:
+    st.image("https://img.icons8.com/clouds/200/payroll.png", width=120)
+    st.markdown("### ⚙️ Hub Controls")
+    st.write("Streamline your payroll data extraction and Paychex formatting workflow effortlessly.")
 
-    # Dynamically find the header row
-    df_raw_check = pd.read_excel(xls, sheet_name=target_sheet, header=None)
-    header_row = 0
-    for idx, row in df_raw_check.head(15).iterrows():
-        row_str = ' '.join(str(v).lower() for v in row.values if pd.notna(v))
-        if 'name' in row_str or 'employee' in row_str or 'id' in row_str:
-            header_row = idx
-            break
+    st.markdown("---")
+    st.markdown("### 📬 Developer Support")
+    st.write("Have questions or need workflow customization?")
 
-    df = pd.read_excel(xls, sheet_name=target_sheet, header=header_row)
-    df.columns = df.columns.astype(str).str.strip()
-    df = df.loc[:, ~df.columns.str.contains('^Unnamed', na=False)]
+    # Direct Email Button linking to your email address
+    st.markdown(
+        """
+        <a href="mailto:cunananmarkedward2330@gmail.com" target="_blank">
+            <button style="
+                width: 100%;
+                background: linear-gradient(135deg, #3182ce 0%, #2b6cb0 100%);
+                color: white;
+                border: none;
+                padding: 0.75rem 1rem;
+                border-radius: 8px;
+                font-weight: 600;
+                cursor: pointer;
+                box-shadow: 0 4px 12px rgba(49, 130, 206, 0.4);
+                transition: all 0.3s ease;
+            ">
+                ✉️ Send Email to Developer
+            </button>
+        </a>
+        """,
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        "<br><p style='font-size:0.8rem; color: #718096; text-align:center;'>Mark Edward Cunanan<br>© 2026 Payroll Automation Hub</p>",
+        unsafe_allow_html=True)
 
-    # Strict Employee ID column matching
-    id_col = next(
-        (c for c in df.columns if any(k in c.lower() for k in ['employee id', 'emp id', 'worker id', 'staff id'])),
-        None)
-    if not id_col:
-        id_col = next((c for c in df.columns if 'id' in c.lower() and not any(ex in c.lower() for ex in
-                                                                              ['transaction', 'trans', 'order',
-                                                                               'invoice', 'record', 'receipt', 'visit',
-                                                                               'client', 'company', 'branch', 'site'])),
-                      None)
+# --- HERO HEADER ---
+st.markdown("""
+    <div class="hero-banner">
+        <h1>⚡ Payroll & Email Automation Hub</h1>
+        <p>Transform multi-file Excel timesheets and records into clean, Paychex import-ready templates in seconds.</p>
+    </div>
+""", unsafe_allow_html=True)
 
-    # Strict Employee Name column matching (Excluding branch, facility, healing hearts, company, etc.)
-    exclusion_keywords = ['company', 'client', 'facility', 'business', 'vendor', 'location', 'account', 'branch',
-                          'site', 'healing', 'hearts', 'department']
+# Create modern styled tabs for the dashboards
+tab1, tab2 = st.tabs(["🚀 Multi-Excel Paychex Converter", "📊 General Payroll Dashboard"])
 
-    name_col = next((c for c in df.columns if any(
-        k in c.lower() for k in ['employee name', 'worker name', 'staff name', 'full name', 'emp name']) and not any(
-        ex in c.lower() for ex in exclusion_keywords)), None)
-    if not name_col:
-        name_col = next(
-            (c for c in df.columns if 'name' in c.lower() and not any(ex in c.lower() for ex in exclusion_keywords)),
-            None)
+# ==========================================
+# TAB 1: MULTI-EXCEL PAYCHEX CONVERTER (PRIMARY)
+# ==========================================
+with tab1:
+    st.markdown("""
+        <div class="custom-card">
+            <h3>📥 Multi-Excel Timesheet Converter</h3>
+            <p>Upload 10 to 15 Excel timesheets simultaneously. The engine will parse, aggregate, and map your entries directly into the standard Paychex import format.</p>
+        </div>
+    """, unsafe_allow_html=True)
 
-    rate_col = next((c for c in df.columns if 'rate' in c.lower() or 'wage' in c.lower()), None)
-    hours_col = next((c for c in df.columns if any(k in c.lower() for k in ['hour', 'hrs', 'misc', 'input'])), None)
-    miles_col = next((c for c in df.columns if 'mile' in c.lower() and 'total' not in c.lower()), None)
-    type_col = next(
-        (c for c in df.columns if any(k in c.lower() for k in ['type', 'component', 'service', 'category', 'pay'])),
-        None)
+    # Multi-file Excel uploader
+    uploaded_excels = st.file_uploader(
+        "Drop your Excel Timesheets here (Multiple files supported)",
+        type=["xlsx", "xls"],
+        accept_multiple_files=True,
+        key="multi_excel_uploader"
+    )
 
-    raw_records = []
+    if uploaded_excels:
+        all_paychex_rows = []
 
-    for _, row in df.iterrows():
-        # 1. Extract Employee ID
-        emp_id = None
-        if id_col and pd.notna(row.get(id_col)):
-            try:
-                emp_id = int(float(str(row.get(id_col)).strip()))
-            except (ValueError, TypeError):
-                pass
+        with st.spinner(f"✨ Processing {len(uploaded_excels)} Excel files simultaneously..."):
+            for file in uploaded_excels:
+                try:
+                    df = pd.read_excel(file)
+                    file_name_lower = file.name.lower()
 
-        if not emp_id:
-            continue
+                    # Loop through rows to extract record details
+                    for index, row in df.iterrows():
+                        row_text = " ".join([str(val) for val in row.values]).lower()
+                        combined_text = file_name_lower + " " + row_text
 
-        # 2. Extract Employee Name (Strictly avoiding branch/facility names like Healing Hearts)
-        emp_name = ""
-        if name_col and pd.notna(row.get(name_col)):
-            val = str(row.get(name_col)).strip()
-            if val and val.lower() not in ['nan', 'none', ''] and not val.replace('.', '', 1).isdigit():
-                if not any(ex in val.lower() for ex in ['healing', 'hearts']):
-                    emp_name = val
+                        # Determine Category & Pay Code based on naming conventions
+                        category = "Time Sheet"
+                        pay_code = "REG"
 
-        if not emp_name:
-            for c in df.columns:
-                if c == id_col or any(k in c.lower() for k in exclusion_keywords):
-                    continue
-                val = str(row.get(c, '')).strip()
-                if val and val.lower() not in ['nan', 'none', ''] and not val.replace('.', '', 1).isdigit() and len(
-                        val) > 2:
-                    if not any(ex in val.lower() for ex in ['healing', 'hearts']):
-                        emp_name = val
-                        break
-        if not emp_name:
-            continue
+                        if any(k in combined_text for k in ["mile", "travel", "mileage"]):
+                            category = "Mileage"
+                            pay_code = "MIL"
+                        elif any(k in combined_text for k in ["case manager", "cm hours", "casemanager"]):
+                            category = "Case Manager Hours"
+                            pay_code = "CM_HRS"
+                        elif any(k in combined_text for k in ["train", "course", "training"]):
+                            category = "Training"
+                            pay_code = "TRN"
 
-        # 3. Extract Rate
-        rate_val = 0.0
-        if rate_col and pd.notna(row.get(rate_col)):
-            try:
-                rate_val = float(row.get(rate_col))
-            except (ValueError, TypeError):
-                rate_val = 0.0
+                        # Extract employee name and numeric hours/units if available
+                        emp_name = "Employee"
+                        units_val = 0.00
 
-        # 4. Extract Metrics
-        hours_val = 0.0
-        if hours_col and pd.notna(row.get(hours_col)):
-            try:
-                hours_val = float(row.get(hours_col))
-            except (ValueError, TypeError):
-                hours_val = 0.0
+                        string_vals = [str(val) for val in row.values if
+                                       isinstance(val, str) and len(str(val).strip()) > 2]
+                        numeric_vals = [val for val in row.values if isinstance(val, (int, float)) and val > 0]
 
-        miles_val = 0.0
-        if miles_col and pd.notna(row.get(miles_col)):
-            try:
-                miles_val = float(row.get(miles_col))
-            except (ValueError, TypeError):
-                miles_val = 0.0
+                        if string_vals:
+                            emp_name = string_vals[0]
+                        if numeric_vals:
+                            units_val = numeric_vals[0]
 
-        # 5. Determine Pay Component Category
-        if miles_val > 0:
-            raw_records.append({
-                'Worker ID': emp_id,
-                'Labor Override': emp_name,
-                'Pay Component': 'MILEAGE REIMB',
-                'Rate': 0.73,
-                'Hours': 0.0,
-                'Units': miles_val,
-                'Amount': 0.0
-            })
+                        # Keep only valid records with hours
+                        if units_val > 0:
+                            all_paychex_rows.append({
+                                "Employee ID": "",
+                                "Employee Name": emp_name,
+                                "Pay Code": pay_code,
+                                "Units/Hours": units_val,
+                                "Category Description": category,
+                                "Source File": file.name
+                            })
+                except Exception as ex:
+                    st.warning(f"⚠️ Could not parse file {file.name}: {ex}")
 
-        if emp_id in prn_employee_ids:
-            comp_type = 'PRN Points'
-            row_amount = rate_val * hours_val
-            row_hours = 0.0
+        if all_paychex_rows:
+            df_paychex_master = pd.DataFrame(all_paychex_rows)
+
+            st.markdown(
+                f'<div class="metric-pill">Successfully compiled {len(uploaded_excels)} files into {len(df_paychex_master)} Paychex records</div>',
+                unsafe_allow_html=True)
+
+            # Styled interactive dataframe preview
+            st.dataframe(df_paychex_master, use_container_width=True)
+
+            # Download button for Paychex CSV
+            csv_output = df_paychex_master.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Master Paychex Import CSV",
+                data=csv_output,
+                file_name="Master_Paychex_Import.csv",
+                mime="text/csv",
+                help="Click to download your formatted CSV file ready for Paychex upload."
+            )
         else:
-            comp_type = 'Hourly'
-            row_amount = 0.0
-            row_hours = hours_val
-            if type_col and pd.notna(row.get(type_col)):
-                t_val = str(row.get(type_col)).upper()
-                if 'PRN' in t_val or 'VISIT' in t_val:
-                    comp_type = 'PRN Points'
-                    row_amount = rate_val * hours_val
-                    row_hours = 0.0
-                elif 'PTO' in t_val:
-                    comp_type = 'PTO Pay'
+            st.info(
+                "ℹ️ Uploaded files were processed, but no valid hours or units were detected inside the spreadsheets.")
 
-        if row_hours > 0 or row_amount > 0:
-            raw_records.append({
-                'Worker ID': emp_id,
-                'Labor Override': emp_name,
-                'Pay Component': comp_type,
-                'Rate': rate_val,
-                'Hours': row_hours,
-                'Units': 0.0,
-                'Amount': row_amount
-            })
+# ==========================================
+# TAB 2: GENERAL PAYROLL DASHBOARD
+# ==========================================
+with tab2:
+    st.markdown("""
+        <div class="custom-card">
+            <h3>📊 General Payroll Spreadsheet Manager</h3>
+            <p>Upload a general payroll summary spreadsheet to inspect data structures, preview schemas, and download clean reports.</p>
+        </div>
+    """, unsafe_allow_html=True)
 
-    if not raw_records:
-        st.error("No valid payroll rows were found. Please check your file layout.")
-        return None
+    uploaded_file = st.file_uploader("Upload Payroll Spreadsheet", type=["xlsx", "xls"], key="payroll_uploader")
 
-    df_raw = pd.DataFrame(raw_records)
+    if uploaded_file is not None:
+        df_payroll = pd.read_excel(uploaded_file)
+        st.success("✅ Payroll file uploaded and verified successfully!")
+        st.dataframe(df_payroll, use_container_width=True)
 
-    # Group and aggregate sums per Worker ID, Labor Override, and Pay Component
-    df_grouped = df_raw.groupby(
-        ['Worker ID', 'Labor Override', 'Pay Component'], as_index=False
-    ).agg({
-        'Rate': 'max',
-        'Hours': 'sum',
-        'Units': 'sum',
-        'Amount': 'sum'
-    })
-
-    paychex_rows = []
-    for _, row in df_grouped.iterrows():
-        comp = row['Pay Component']
-        hrs = row['Hours']
-        units = row['Units']
-        rate = row['Rate']
-        amt = row['Amount']
-
-        final_rate = ''
-        final_hours = ''
-        final_units = ''
-        final_amount = ''
-
-        if comp == 'MILEAGE REIMB':
-            final_rate = 0.73
-            final_units = units if units > 0 else ''
-            if not final_units:
-                continue
-        elif comp == 'PRN Points':
-            if amt > 0:
-                final_amount = round(amt, 2)
-            else:
-                continue
-        elif comp in ['Hourly', 'PTO Pay']:
-            if hrs > 0:
-                final_hours = hrs
-                final_rate = rate if rate > 0 else ''
-            else:
-                continue
-        else:
-            if hrs > 0:
-                final_hours = hrs
-                final_rate = rate if rate > 0 else ''
-            else:
-                continue
-
-        # Format Labor Override to display both Employee Name and Employee ID
-        combined_labor_override = f"{row['Labor Override']} ({row['Worker ID']})"
-
-        paychex_rows.append({
-            'Client ID': client_id,
-            'Worker ID': row['Worker ID'],
-            'Org': '',
-            'Job Number': '',
-            'Pay Component': comp,
-            'Rate': final_rate,
-            'Rate Number': '',
-            'Hours': final_hours,
-            'Units': final_units,
-            'Line Date': '',
-            'Amount': final_amount,
-            'Check': '',
-            'Override State': '',
-            'Override Local': '',
-            'Override Local Jurisdiction': '',
-            'Labor Override': combined_labor_override
-        })
-
-    df_paychex = pd.DataFrame(paychex_rows)
-
-    # Sort so that Hourly & PRN appear first, and Mileage Reimb rows are listed at the bottom
-    if not df_paychex.empty:
-        df_paychex['SortOrder'] = df_paychex['Pay Component'].apply(lambda x: 1 if x == 'MILEAGE REIMB' else 0)
-        df_paychex = df_paychex.sort_values(by=['SortOrder', 'Worker ID']).drop(columns=['SortOrder'])
-
-    columns_order = [
-        'Client ID', 'Worker ID', 'Org', 'Job Number', 'Pay Component',
-        'Rate', 'Rate Number', 'Hours', 'Units', 'Line Date', 'Amount',
-        'Check', 'Override State', 'Override Local', 'Override Local Jurisdiction', 'Labor Override'
-    ]
-
-    for col in columns_order:
-        if col not in df_paychex.columns:
-            df_paychex[col] = ''
-
-    return df_paychex[columns_order]
-
-
-# --- Streamlit User Interface ---
-st.title("💼 Payroll Automation Dashboard")
-st.markdown(
-    "Upload your **raw data export file**. Branch names are now excluded, ensuring the Labor Override correctly captures the Employee Name and Employee ID.")
-
-uploaded_file = st.file_uploader("Upload Raw Excel Export (.xls / .xlsx)", type=["xls", "xlsx"])
-
-if uploaded_file is not None:
-    with st.spinner("Processing payroll calculations..."):
-        df_result = process_raw_payroll(uploaded_file)
-
-    if df_result is not None and not df_result.empty:
-        st.success("Payroll successfully transformed into Paychex format!")
-
-        st.markdown("### 📊 Live Preview of Paychex Import Data")
-        st.dataframe(df_result, use_container_width=True)
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Line Items", len(df_result))
-        col2.metric("Hourly Entries", len(df_result[df_result['Pay Component'] == 'Hourly']))
-        col3.metric("PRN / Mileage Entries",
-                    len(df_result[df_result['Pay Component'].isin(['PRN Points', 'MILEAGE REIMB'])]))
-
-        st.markdown("---")
-        st.header("📥 Download Final Import File")
-
-        csv_data = df_result.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="Download Paychex-Ready CSV",
-            data=csv_data,
-            file_name="Paychex_Final_Import.csv",
-            mime="text/csv",
-            type="primary"
+            label="📥 Download Processed Payroll Report",
+            data=uploaded_file,
+            file_name="Processed_Payroll.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
