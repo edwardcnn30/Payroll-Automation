@@ -11,17 +11,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for a sleek, modern, and interactive UI
+# Custom CSS for a sleek, modern UI
 st.markdown("""
     <style>
-        /* Main background & font styling */
         .main {
             background-color: #0e1117;
         }
-
-        /* Modern Header Banner */
         .hero-banner {
-            padding: 2.5rem 2rem;
+            padding: 2.2rem 2rem;
             background: linear-gradient(135deg, #1f4068 0%, #162447 50%, #1b1b2f 100%);
             border-radius: 16px;
             color: #ffffff;
@@ -30,18 +27,15 @@ st.markdown("""
             border: 1px solid rgba(255, 255, 255, 0.1);
         }
         .hero-banner h1 {
-            font-size: 2.5rem;
+            font-size: 2.3rem;
             font-weight: 800;
             margin-bottom: 0.5rem;
-            letter-spacing: -0.5px;
         }
         .hero-banner p {
-            font-size: 1.1rem;
+            font-size: 1.05rem;
             color: #a0aec0;
             margin-bottom: 0;
         }
-
-        /* Modern Card Containers */
         .custom-card {
             background: rgba(255, 255, 255, 0.03);
             border: 1px solid rgba(255, 255, 255, 0.08);
@@ -50,8 +44,6 @@ st.markdown("""
             margin-bottom: 1.5rem;
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
         }
-
-        /* Metric / Status Highlights */
         .metric-pill {
             display: inline-block;
             background: rgba(49, 130, 206, 0.2);
@@ -68,13 +60,13 @@ st.markdown("""
 
 # --- SIDEBAR: NAVIGATION & CONTACT ---
 with st.sidebar:
-    st.image("https://img.icons8.com/clouds/200/payroll.png", width=120)
+    st.image("https://img.icons8.com/clouds/200/payroll.png", width=110)
     st.markdown("### ⚙️ Hub Controls")
-    st.write("Streamline your payroll data extraction and Paychex formatting workflow effortlessly.")
+    st.write("Manage payroll periods, correct item values, and export clean Paychex templates.")
 
     st.markdown("---")
-    st.markdown("### 📬 Developer Support")
-    st.write("Have questions or need workflow customization?")
+    st.markdown("### 📬 Developer Contact")
+    st.write("Need workflow tweaks or custom mapping rules?")
 
     # Direct Email Button linking to your email address
     st.markdown(
@@ -92,7 +84,7 @@ with st.sidebar:
                 box-shadow: 0 4px 12px rgba(49, 130, 206, 0.4);
                 transition: all 0.3s ease;
             ">
-                ✉️ Send Email to Developer
+                ✉️ Email Developer
             </button>
         </a>
         """,
@@ -106,25 +98,67 @@ with st.sidebar:
 st.markdown("""
     <div class="hero-banner">
         <h1>⚡ Payroll & Email Automation Hub</h1>
-        <p>Transform multi-file Excel timesheets and records into clean, Paychex import-ready templates in seconds.</p>
+        <p>Process raw payroll sheets, verify or correct item values interactively, and export standard Paychex import templates seamlessly.</p>
     </div>
 """, unsafe_allow_html=True)
 
-# Create modern styled tabs for the dashboards
-tab1, tab2 = st.tabs(["🚀 Multi-Excel Paychex Converter", "📊 General Payroll Dashboard"])
+# Tabs separating the Payroll Dashboard and Multi-Excel Converter
+tab1, tab2 = st.tabs(["📊 Payroll Dashboard & Value Correction", "📥 Multi-Excel Paychex Converter"])
 
 # ==========================================
-# TAB 1: MULTI-EXCEL PAYCHEX CONVERTER (PRIMARY)
+# TAB 1: PAYROLL DASHBOARD & VALUE CORRECTION
 # ==========================================
 with tab1:
     st.markdown("""
         <div class="custom-card">
-            <h3>📥 Multi-Excel Timesheet Converter</h3>
-            <p>Upload 10 to 15 Excel timesheets simultaneously. The engine will parse, aggregate, and map your entries directly into the standard Paychex import format.</p>
+            <h3>📊 Raw Payroll Processing & Item Correction</h3>
+            <p>Upload your raw payroll spreadsheet below. The system will load the values, allowing you to review and <strong>interactively correct any item or value</strong> before generating the final Paychex template.</p>
         </div>
     """, unsafe_allow_html=True)
 
-    # Multi-file Excel uploader
+    uploaded_payroll = st.file_uploader("Upload Raw Payroll Excel File", type=["xlsx", "xls"],
+                                        key="raw_payroll_uploader")
+
+    if uploaded_payroll is not None:
+        try:
+            df_raw = pd.read_excel(uploaded_payroll)
+            st.success("✅ Payroll file successfully loaded into the dashboard!")
+
+            st.markdown("#### ✏️ Review & Correct Payroll Items Below")
+            st.write(
+                "Double-click any cell in the table below to edit, correct values, or adjust entries prior to export.")
+
+            # Interactive data editor allowing the user to correct any item value directly
+            df_corrected = st.data_editor(df_raw, num_rows="dynamic", use_container_width=True, key="payroll_editor")
+
+            st.markdown("---")
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.info(
+                    "💡 Once you have verified and corrected all items, click the button to generate and download your clean template.")
+            with col2:
+                csv_processed = df_corrected.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Download Corrected Paychex Report",
+                    data=csv_processed,
+                    file_name="Corrected_Paychex_Template.csv",
+                    mime="text/csv",
+                    help="Download the finalized and corrected data ready for import."
+                )
+        except Exception as e:
+            st.error(f"⚠️ Error processing the uploaded payroll file: {e}")
+
+# ==========================================
+# TAB 2: MULTI-EXCEL TIMESHEET CONVERTER
+# ==========================================
+with tab2:
+    st.markdown("""
+        <div class="custom-card">
+            <h3>📥 Multi-Excel Timesheet Converter</h3>
+            <p>Upload 10 to 15 Excel timesheets simultaneously. The engine will parse, aggregate, and map your entries directly into standard Paychex import codes.</p>
+        </div>
+    """, unsafe_allow_html=True)
+
     uploaded_excels = st.file_uploader(
         "Drop your Excel Timesheets here (Multiple files supported)",
         type=["xlsx", "xls"],
@@ -141,12 +175,10 @@ with tab1:
                     df = pd.read_excel(file)
                     file_name_lower = file.name.lower()
 
-                    # Loop through rows to extract record details
                     for index, row in df.iterrows():
                         row_text = " ".join([str(val) for val in row.values]).lower()
                         combined_text = file_name_lower + " " + row_text
 
-                        # Determine Category & Pay Code based on naming conventions
                         category = "Time Sheet"
                         pay_code = "REG"
 
@@ -160,7 +192,6 @@ with tab1:
                             category = "Training"
                             pay_code = "TRN"
 
-                        # Extract employee name and numeric hours/units if available
                         emp_name = "Employee"
                         units_val = 0.00
 
@@ -173,7 +204,6 @@ with tab1:
                         if numeric_vals:
                             units_val = numeric_vals[0]
 
-                        # Keep only valid records with hours
                         if units_val > 0:
                             all_paychex_rows.append({
                                 "Employee ID": "",
@@ -192,44 +222,15 @@ with tab1:
             st.markdown(
                 f'<div class="metric-pill">Successfully compiled {len(uploaded_excels)} files into {len(df_paychex_master)} Paychex records</div>',
                 unsafe_allow_html=True)
-
-            # Styled interactive dataframe preview
             st.dataframe(df_paychex_master, use_container_width=True)
 
-            # Download button for Paychex CSV
             csv_output = df_paychex_master.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Download Master Paychex Import CSV",
                 data=csv_output,
                 file_name="Master_Paychex_Import.csv",
-                mime="text/csv",
-                help="Click to download your formatted CSV file ready for Paychex upload."
+                mime="text/csv"
             )
         else:
             st.info(
                 "ℹ️ Uploaded files were processed, but no valid hours or units were detected inside the spreadsheets.")
-
-# ==========================================
-# TAB 2: GENERAL PAYROLL DASHBOARD
-# ==========================================
-with tab2:
-    st.markdown("""
-        <div class="custom-card">
-            <h3>📊 General Payroll Spreadsheet Manager</h3>
-            <p>Upload a general payroll summary spreadsheet to inspect data structures, preview schemas, and download clean reports.</p>
-        </div>
-    """, unsafe_allow_html=True)
-
-    uploaded_file = st.file_uploader("Upload Payroll Spreadsheet", type=["xlsx", "xls"], key="payroll_uploader")
-
-    if uploaded_file is not None:
-        df_payroll = pd.read_excel(uploaded_file)
-        st.success("✅ Payroll file uploaded and verified successfully!")
-        st.dataframe(df_payroll, use_container_width=True)
-
-        st.download_button(
-            label="📥 Download Processed Payroll Report",
-            data=uploaded_file,
-            file_name="Processed_Payroll.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
