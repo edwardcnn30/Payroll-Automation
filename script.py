@@ -134,7 +134,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# --- CORE BACKEND PROCESSING FUNCTION (UNALTERED LOGIC) ---
+# --- CORE BACKEND PROCESSING FUNCTION (UPDATED FOR NEW EMPLOYEES, PER DIEM & MISSING IDS) ---
 def process_raw_payroll(uploaded_file):
     xls = pd.ExcelFile(uploaded_file)
     client_id = 16068715
@@ -205,9 +205,7 @@ def process_raw_payroll(uploaded_file):
             except (ValueError, TypeError):
                 pass
 
-        if not emp_id:
-            continue
-
+        # Extract employee name
         emp_name = ""
         if name_col and pd.notna(row.get(name_col)):
             val = str(row.get(name_col)).strip()
@@ -225,7 +223,9 @@ def process_raw_payroll(uploaded_file):
                     if not any(ex in val.lower() for ex in ['healing', 'hearts']):
                         emp_name = val
                         break
-        if not emp_name:
+
+        # If both ID and Name are missing, skip row
+        if not emp_id and not emp_name:
             continue
 
         rate_val = 0.0
@@ -251,8 +251,8 @@ def process_raw_payroll(uploaded_file):
 
         if miles_val > 0:
             raw_records.append({
-                'Worker ID': emp_id,
-                'Labor Override': emp_name,
+                'Worker ID': emp_id if emp_id else '',
+                'Labor Override': emp_name if emp_name else 'Unknown Employee',
                 'Pay Component': 'MILEAGE REIMB',
                 'Rate': 0.73,
                 'Hours': 0.0,
@@ -260,7 +260,17 @@ def process_raw_payroll(uploaded_file):
                 'Amount': 0.0
             })
 
+        # Check pay type / per diem / PRN / hourly classification dynamically
+        is_per_diem_or_prn = False
         if emp_id in prn_employee_ids:
+            is_per_diem_or_prn = True
+
+        if type_col and pd.notna(row.get(type_col)):
+            t_val = str(row.get(type_col)).upper()
+            if any(k in t_val for k in ['PRN', 'VISIT', 'PER DIEM', 'PERDIEM']):
+                is_per_diem_or_prn = True
+
+        if is_per_diem_or_prn:
             comp_type = 'PRN Points'
             row_amount = rate_val * hours_val
             row_hours = 0.0
@@ -270,17 +280,13 @@ def process_raw_payroll(uploaded_file):
             row_hours = hours_val
             if type_col and pd.notna(row.get(type_col)):
                 t_val = str(row.get(type_col)).upper()
-                if 'PRN' in t_val or 'VISIT' in t_val:
-                    comp_type = 'PRN Points'
-                    row_amount = rate_val * hours_val
-                    row_hours = 0.0
-                elif 'PTO' in t_val:
+                if 'PTO' in t_val:
                     comp_type = 'PTO Pay'
 
         if row_hours > 0 or row_amount > 0:
             raw_records.append({
-                'Worker ID': emp_id,
-                'Labor Override': emp_name,
+                'Worker ID': emp_id if emp_id else '',
+                'Labor Override': emp_name if emp_name else 'Unknown Employee',
                 'Pay Component': comp_type,
                 'Rate': rate_val,
                 'Hours': row_hours,
@@ -309,6 +315,8 @@ def process_raw_payroll(uploaded_file):
         units = row['Units']
         rate = row['Rate']
         amt = row['Amount']
+        w_id = row['Worker ID']
+        w_name = row['Labor Override']
 
         final_rate = ''
         final_hours = ''
@@ -338,11 +346,20 @@ def process_raw_payroll(uploaded_file):
             else:
                 continue
 
-        combined_labor_override = f"{row['Labor Override']} ({row['Worker ID']})"
+        # Flag missing IDs so you can instantly spot them
+        if not w_id or str(w_id).strip() in ['', 'nan', 'None']:
+            status_flag = "⚠️ MISSING ID - REVIEW REQUIRED"
+            display_worker_id = "MISSING ID"
+            combined_labor_override = f"{w_name} (NO ID)"
+        else:
+            status_flag = "✅ Valid"
+            display_worker_id = w_id
+            combined_labor_override = f"{w_name} ({w_id})"
 
         paychex_rows.append({
+            '⚠️ Review Status': status_flag,
             'Client ID': client_id,
-            'Worker ID': row['Worker ID'],
+            'Worker ID': display_worker_id,
             'Org': '',
             'Job Number': '',
             'Pay Component': comp,
@@ -366,7 +383,7 @@ def process_raw_payroll(uploaded_file):
         df_paychex = df_paychex.sort_values(by=['SortOrder', 'Worker ID']).drop(columns=['SortOrder'])
 
     columns_order = [
-        'Client ID', 'Worker ID', 'Org', 'Job Number', 'Pay Component',
+        '⚠️ Review Status', 'Client ID', 'Worker ID', 'Org', 'Job Number', 'Pay Component',
         'Rate', 'Rate Number', 'Hours', 'Units', 'Line Date', 'Amount',
         'Check', 'Override State', 'Override Local', 'Override Local Jurisdiction', 'Labor Override'
     ]
@@ -391,7 +408,7 @@ if current_nav == "home":
                 Everything You Need to <span class="orange">Start</span>, <span class="orange">Get Hired</span>, and <span class="yellow">Thrive</span> as a Payroll Professional
             </h1>
             <p class="hero-subtitle">
-                Transform raw operational exports into sleek, verified, Paychex-ready statements instantly. Perform direct live edits and handle custom adjustments seamlessly.
+                Transform raw operational exports into sleek, verified, Paychex-ready statements instantly. Automatically catch new employees, per diem rates, and missing IDs with live review flags.
             </p>
         </div>
     """, unsafe_allow_html=True)
@@ -426,41 +443,46 @@ elif current_nav == "export":
     st.markdown("""
         <div class="hero-container" style="padding-bottom: 1rem;">
             <h1 style="font-size: 2.2rem; font-weight: 800; color: white;">📥 Export Center & Interactive Editor</h1>
-            <p class="hero-subtitle">Review calculations, make live table edits, and download your final Paychex import file.</p>
+            <p class="hero-subtitle">Review calculations, spot new entries or missing IDs in the review column, and download your final Paychex import file.</p>
         </div>
     """, unsafe_allow_html=True)
 
     if st.session_state["uploaded_file"] is not None:
-        with st.spinner("✨ Processing calculations and structuring export..."):
+        with st.spinner("✨ Processing calculations, per diem classifications, and ID checks..."):
             df_result = process_raw_payroll(st.session_state["uploaded_file"])
 
         if df_result is not None and not df_result.empty:
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+            st.info(
+                "💡 **Tip:** Look at the **'⚠️ Review Status'** column on the far left. Any row missing an ID will be clearly flagged for your attention before export!")
+
             edited_df = st.data_editor(df_result, num_rows="dynamic", use_container_width=True, key="payroll_editor")
             st.markdown('</div>', unsafe_allow_html=True)
 
             # Summary Metrics Cards
-            col1, col2, col3 = st.columns(3)
-            with col1:
+            missing_id_count = len(edited_df[edited_df['⚠️ Review Status'].str.contains('MISSING ID', na=False)])
+            hourly_count = len(edited_df[edited_df['Pay Component'] == 'Hourly'])
+            special_count = len(edited_df[edited_df['Pay Component'].isin(['PRN Points', 'MILEAGE REIMB'])])
+
+            mcol1, mcol2, mcol3 = st.columns(3)
+            with mcol1:
                 st.markdown(f"""
                     <div class="custom-card" style="text-align: center; padding: 1rem;">
-                        <div style="font-size: 0.8rem; color: #9ca3af; text-transform: uppercase;">Total Entries</div>
-                        <div style="font-size: 1.8rem; font-weight: 700; color: #f97316; margin-top: 0.2rem;">{len(edited_df)}</div>
+                        <div style="font-size: 0.8rem; color: #9ca3af; text-transform: uppercase;">Missing ID Flags</div>
+                        <div style="font-size: 1.8rem; font-weight: 700; color: #ef4444; margin-top: 0.2rem;">{missing_id_count}</div>
                     </div>
                 """, unsafe_allow_html=True)
-            with col2:
-                hourly_count = len(edited_df[edited_df['Pay Component'] == 'Hourly'])
+            with mcol2:
                 st.markdown(f"""
                     <div class="custom-card" style="text-align: center; padding: 1rem;">
                         <div style="font-size: 0.8rem; color: #9ca3af; text-transform: uppercase;">Hourly Entries</div>
                         <div style="font-size: 1.8rem; font-weight: 700; color: #eab308; margin-top: 0.2rem;">{hourly_count}</div>
                     </div>
                 """, unsafe_allow_html=True)
-            with col3:
-                special_count = len(edited_df[edited_df['Pay Component'].isin(['PRN Points', 'MILEAGE REIMB'])])
+            with mcol3:
                 st.markdown(f"""
                     <div class="custom-card" style="text-align: center; padding: 1rem;">
-                        <div style="font-size: 0.8rem; color: #9ca3af; text-transform: uppercase;">PRN / Mileage</div>
+                        <div style="font-size: 0.8rem; color: #9ca3af; text-transform: uppercase;">PRN / Mileage / Per Diem</div>
                         <div style="font-size: 1.8rem; font-weight: 700; color: #60a5fa; margin-top: 0.2rem;">{special_count}</div>
                     </div>
                 """, unsafe_allow_html=True)
@@ -468,7 +490,7 @@ elif current_nav == "export":
             st.markdown("""
                 <div class="custom-card" style="margin-top: 2rem; text-align: center;">
                     <h3>Download Final Import File</h3>
-                    <p style="color: #9ca3af; font-size: 0.95rem; margin-bottom: 1rem;">Export your verified Paychex CSV file incorporating all manual adjustments.</p>
+                    <p style="color: #9ca3af; font-size: 0.95rem; margin-bottom: 1rem;">Export your verified Paychex CSV file incorporating all manual adjustments and newly included entries.</p>
             """, unsafe_allow_html=True)
 
             csv_data = edited_df.to_csv(index=False).encode('utf-8')
