@@ -152,23 +152,36 @@ def process_home_health_payroll(df):
     # Clean up column names and strip whitespace
     df.columns = [str(c).strip() for c in df.columns]
 
-    # Map columns safely regardless of minor header variations
+    # Map columns safely ensuring unique target mapping
     col_map = {}
+    used_targets = set()
     for c in df.columns:
-        c_lower = c.lower()
+        c_lower = str(c).lower()
+        target = None
         if "employee id" in c_lower or ("emp" in c_lower and "id" in c_lower):
-            col_map[c] = "Employee ID"
+            target = "Employee ID"
         elif "employee" in c_lower or "name" in c_lower:
-            if "patient" not in c_lower and "client" not in c_lower and "Employee" not in col_map.values():
-                col_map[c] = "Employee"
+            if "patient" not in c_lower and "client" not in c_lower:
+                target = "Employee"
         elif "hour" in c_lower:
-            col_map[c] = "Hours"
+            target = "Hours"
         elif "rate" in c_lower:
-            col_map[c] = "Rate"
+            target = "Rate"
         elif "amount" in c_lower:
-            col_map[c] = "Amount"
+            target = "Amount"
+        elif "mile" in c_lower:
+            target = "Mileage"
+
+        if target and target not in used_targets:
+            col_map[c] = target
+            used_targets.add(target)
 
     df = df.rename(columns=col_map)
+
+    # Ensure no duplicate columns became dataframe subsets
+    for col in ["Employee ID", "Employee", "Hours", "Rate", "Amount", "Mileage"]:
+        if col in df.columns and isinstance(df[col], pd.DataFrame):
+            df[col] = df[col].iloc[:, 0]
 
     # Programmatically compute hours if raw time-in (Col N index 13) and time-out (Col O index 14) are present
     # Replicating Excel formula: =MOD(O2-N2,1)*24
@@ -190,7 +203,6 @@ def process_home_health_payroll(df):
                     pass
                 return row.get("Hours", 0.0)
 
-            # Only override hours if calculated values are valid numeric floats
             calculated_hrs = df.apply(compute_time_diff, axis=1)
             if calculated_hrs.sum() > 0:
                 df["Hours"] = calculated_hrs
