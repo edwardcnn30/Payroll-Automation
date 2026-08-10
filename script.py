@@ -114,7 +114,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Render Sleek Header Bar with New Navigation Item
+# Render Sleek Header Bar with Navigation Items
 active_home = "active" if current_tab == "Home" else ""
 active_upload = "active" if current_tab == "Upload Data" else ""
 active_batch = "active" if current_tab == "Multi-LOB Batch" else ""
@@ -242,7 +242,7 @@ def process_home_health_payroll(df):
 
         if mileage > 0:
             mileage_row = base_row_data.copy()
-            mileage_row["Pay Component"] = "MILEAGE REIMBURSEMENT"
+            mileage_row["Pay Component"] = "MILEAGE REIMB"
             mileage_row["Rate"] = 0.73
             mileage_row["Hours"] = ""
             mileage_row["Units"] = mileage
@@ -282,8 +282,9 @@ def process_home_care_payroll(df):
     for index, row in df.iterrows():
         comp = str(row.get("Pay Component", "")).strip().lower()
         rate = pd.to_numeric(row.get("Rate"), errors="coerce")
-        if comp in ["mileage", "miles", "mileage reimbursement"] or (not pd.isna(rate) and rate == 0.73):
-            df.at[index, "Pay Component"] = "MILEAGE REIMBURSEMENT"
+        if comp in ["mileage", "miles", "mileage reimbursement", "mileage reimb"] or (
+                not pd.isna(rate) and rate == 0.73):
+            df.at[index, "Pay Component"] = "MILEAGE REIMB"
             df.at[index, "Units"] = row["Hours"]
             df.at[index, "Hours"] = ""
             df.at[index, "Rate"] = 0.73
@@ -294,7 +295,7 @@ def process_home_care_payroll(df):
 
     for index, row in df.iterrows():
         comp = row.get("Pay Component")
-        if comp != "MILEAGE REIMBURSEMENT" and (pd.isna(comp) or str(comp).strip() == ""):
+        if comp != "MILEAGE REIMB" and (pd.isna(comp) or str(comp).strip() == ""):
             df.at[index, "Pay Component"] = "Overtime"
 
         if pd.isna(row.get("Amount")) or row.get("Amount") == "":
@@ -512,7 +513,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     "Worker ID": formatted_worker_id,
                     "Org": "",
                     "Job Num": "",
-                    "Pay Component": "MILEAGE REIMBURSEMENT",
+                    "Pay Component": "MILEAGE REIMB",
                     "Rate": 0.73,
                     "Hours": "",
                     "Units": total_miles,
@@ -791,7 +792,6 @@ elif current_tab == "Multi-LOB Batch":
             st.markdown("### 📊 Master Enterprise Cross-LOB Combined Preview")
             st.dataframe(master_batch_df, use_container_width=True)
 
-            # Summary Metrics Across All LOBs
             total_batch_amount = pd.to_numeric(master_batch_df["Amount"], errors="coerce").sum()
             total_batch_hours = pd.to_numeric(master_batch_df["Hours"], errors="coerce").sum()
 
@@ -803,7 +803,6 @@ elif current_tab == "Multi-LOB Batch":
             st.warning(
                 "Please upload at least one file across any of the Line of Business uploaders above to run the batch.")
 
-    # Display cached batch results if available
     if st.session_state.batch_processed_df is not None and not batch_hospice_files and not batch_hc_file and not batch_hh_file:
         st.markdown("### 📋 Current Cached Batch Output")
         st.dataframe(st.session_state.batch_processed_df, use_container_width=True)
@@ -844,16 +843,16 @@ elif current_tab == "Developer Support":
        - PRN Points employees sorted alphabetically.
        - Hourly employees sorted alphabetically (capped at 80 hours).
        - Overtime entries for hourly exceeding 80 hours (retaining original rate).
-       - Mileage entries tagged as **MILEAGE REIMBURSEMENT** at **0.73** rate.
+       - Mileage entries tagged as **MILEAGE REIMB** at **0.73** rate.
     2. **Home Care Rules**:
        - Evaluates pre-formatted Paychex ready files.
        - Blank Pay Components are automatically tagged as **Overtime** while preserving original rates.
        - Hourly rows are aggregated per Worker ID and any total hours over 80 are split into **Overtime**.
-       - Mileage entries normalized to **MILEAGE REIMBURSEMENT**.
+       - Mileage entries normalized to **MILEAGE REIMB**.
     3. **Hospice Reconciliation Rules**:
        - Uses an authoritative employee reference directory alongside automated content scanning to match and populate correct Worker IDs.
        - Enforces the 80-hour threshold across multiple rates per employee, retaining original rates for overtime.
-       - Replaces home health mileage with official timesheet mileage tagged as **MILEAGE REIMBURSEMENT** (`Units * 0.73`).
+       - Replaces home health mileage with official timesheet mileage tagged as **MILEAGE REIMB** (`Units * 0.73`).
        - Features an automated summary screen showing total computed amounts and individual employee breakdown cards.
     4. **Multi-LOB Batch Enterprise Pipeline**:
        - Runs all three lines of business concurrently in a separate dedicated workspace.
