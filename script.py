@@ -249,6 +249,9 @@ def process_home_health_payroll(df):
             mileage_row["Amount"] = round(mileage * 0.73, 2)
             mileage_rows.append(mileage_row)
 
+    # Filter out PRN Points rows where Amount is 0, empty, or null
+    prn_rows = [r for r in prn_rows if pd.notnull(r["Amount"]) and r["Amount"] != "" and r["Amount"] != 0]
+
     prn_rows = sorted(prn_rows, key=lambda x: x["_EmployeeName"])
     hourly_rows = sorted(hourly_rows, key=lambda x: x["_EmployeeName"])
     overtime_rows = sorted(overtime_rows, key=lambda x: x["_EmployeeName"])
@@ -425,7 +428,7 @@ def process_home_care_payroll(df):
                 "Hours": "",
                 "Units": mileage_units,
                 "Line Date": "",
-                "Amount": round(mileage_units * 0.73, 2),
+                "Amount": "",  # Cleared final amount for Home Care side
                 "Check": "",
                 "Override State": "",
                 "Override Local": "",
@@ -912,7 +915,8 @@ elif current_tab == "Developer Support":
        - Displays live `"Review": "✅ Validated"` status.
        - Enforces 80-hour threshold (splitting hours over 80 into Overtime).
        - Blank Pay Components automatically tagged as Overtime.
-       - Amount column left blank (`""`) for Hourly and Overtime rows.
+       - Amount column left blank (`""`) for Hourly, Overtime, and Home Care rows.
+       - PRN Points with zero amounts are automatically filtered out.
        - Mileage tagged as **MILEAGE REIMB** at `0.73`.
     2. **Export Center**:
        - Automatically strips out `Review` and tracking columns upon download to guarantee 100% Paychex compatibility.
