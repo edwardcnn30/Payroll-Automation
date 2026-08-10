@@ -134,7 +134,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# --- CORE BACKEND PROCESSING FUNCTION (UPDATED FOR NEW EMPLOYEES, PER DIEM & MISSING IDS) ---
+# --- CORE BACKEND PROCESSING FUNCTION ---
 def process_raw_payroll(uploaded_file):
     xls = pd.ExcelFile(uploaded_file)
     client_id = 16068715
@@ -205,7 +205,6 @@ def process_raw_payroll(uploaded_file):
             except (ValueError, TypeError):
                 pass
 
-        # Extract employee name
         emp_name = ""
         if name_col and pd.notna(row.get(name_col)):
             val = str(row.get(name_col)).strip()
@@ -224,7 +223,6 @@ def process_raw_payroll(uploaded_file):
                         emp_name = val
                         break
 
-        # If both ID and Name are missing, skip row
         if not emp_id and not emp_name:
             continue
 
@@ -260,18 +258,22 @@ def process_raw_payroll(uploaded_file):
                 'Amount': 0.0
             })
 
-        # Check pay type / per diem / PRN / hourly classification dynamically
         is_per_diem_or_prn = False
         if emp_id in prn_employee_ids:
             is_per_diem_or_prn = True
 
+        # Capture exact service/task description from type column for PRN/visit breakdown matching pivot tables
+        specific_service_name = 'PRN Points'
         if type_col and pd.notna(row.get(type_col)):
-            t_val = str(row.get(type_col)).upper()
-            if any(k in t_val for k in ['PRN', 'VISIT', 'PER DIEM', 'PERDIEM']):
-                is_per_diem_or_prn = True
+            t_val = str(row.get(type_col)).strip()
+            if t_val and t_val.lower() not in ['nan', 'none', '']:
+                specific_service_name = t_val
+                if any(k in t_val.upper() for k in
+                       ['PRN', 'VISIT', 'PER DIEM', 'PERDIEM', 'OASIS', 'DISCHARGE', 'EVALUATION', 'SOC']):
+                    is_per_diem_or_prn = True
 
-        if is_per_diem_or_prn:
-            comp_type = 'PRN Points'
+        if is_per_diem_or_prn or emp_id in prn_employee_ids:
+            comp_type = specific_service_name
             row_amount = rate_val * hours_val
             row_hours = 0.0
         else:
@@ -328,11 +330,6 @@ def process_raw_payroll(uploaded_file):
             final_units = units if units > 0 else ''
             if not final_units:
                 continue
-        elif comp == 'PRN Points':
-            if amt > 0:
-                final_amount = round(amt, 2)
-            else:
-                continue
         elif comp in ['Hourly', 'PTO Pay']:
             if hrs > 0:
                 final_hours = hrs
@@ -340,13 +337,12 @@ def process_raw_payroll(uploaded_file):
             else:
                 continue
         else:
-            if hrs > 0:
-                final_hours = hrs
-                final_rate = rate if rate > 0 else ''
+            # Handles specific task components (PRN, OASIS, Visits, etc.) by summing amounts
+            if amt > 0:
+                final_amount = round(amt, 2)
             else:
                 continue
 
-        # Flag missing IDs so you can instantly spot them
         if not w_id or str(w_id).strip() in ['', 'nan', 'None']:
             status_flag = "⚠️ MISSING ID - REVIEW REQUIRED"
             display_worker_id = "MISSING ID"
@@ -448,7 +444,7 @@ elif current_nav == "export":
     """, unsafe_allow_html=True)
 
     if st.session_state["uploaded_file"] is not None:
-        with st.spinner("✨ Processing calculations, per diem classifications, and ID checks..."):
+        with st.spinner("✨ Processing calculations, task-level breakdowns, and ID checks..."):
             df_result = process_raw_payroll(st.session_state["uploaded_file"])
 
         if df_result is not None and not df_result.empty:
@@ -462,7 +458,7 @@ elif current_nav == "export":
             # Summary Metrics Cards
             missing_id_count = len(edited_df[edited_df['⚠️ Review Status'].str.contains('MISSING ID', na=False)])
             hourly_count = len(edited_df[edited_df['Pay Component'] == 'Hourly'])
-            special_count = len(edited_df[edited_df['Pay Component'].isin(['PRN Points', 'MILEAGE REIMB'])])
+            special_count = len(edited_df[~edited_df['Pay Component'].isin(['Hourly', 'PTO Pay', 'MILEAGE REIMB'])])
 
             mcol1, mcol2, mcol3 = st.columns(3)
             with mcol1:
@@ -482,7 +478,7 @@ elif current_nav == "export":
             with mcol3:
                 st.markdown(f"""
                     <div class="custom-card" style="text-align: center; padding: 1rem;">
-                        <div style="font-size: 0.8rem; color: #9ca3af; text-transform: uppercase;">PRN / Mileage / Per Diem</div>
+                        <div style="font-size: 0.8rem; color: #9ca3af; text-transform: uppercase;">PRN / Visit / Mileage</div>
                         <div style="font-size: 1.8rem; font-weight: 700; color: #60a5fa; margin-top: 0.2rem;">{special_count}</div>
                     </div>
                 """, unsafe_allow_html=True)
