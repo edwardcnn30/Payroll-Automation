@@ -148,7 +148,36 @@ if "batch_processed_df" not in st.session_state:
 
 
 # --- 1. HOME HEALTH PROCESSOR ---
-def process_home_health_payroll(df):
+def process_home_health_payroll(uploaded_file_or_df):
+    # Dynamic Header Auto-Detection to skip agency metadata title rows
+    if hasattr(uploaded_file_or_df, "read") or hasattr(uploaded_file_or_df, "name"):
+        try:
+            df_raw = pd.read_excel(uploaded_file_or_df, header=None) if not getattr(uploaded_file_or_df, 'name',
+                                                                                    '').endswith(
+                '.csv') else pd.read_csv(uploaded_file_or_df, header=None)
+            header_row_idx = 0
+            for r in range(min(15, len(df_raw))):
+                row_str = " ".join([str(df_raw.iloc[r, c]).lower() for c in range(len(df_raw.columns))])
+                if ('employee' in row_str or 'worker' in row_str or 'name' in row_str) and (
+                        'id' in row_str or 'emp' in row_str or 'hour' in row_str):
+                    header_row_idx = r
+                    break
+
+            if hasattr(uploaded_file_or_df, 'seek'):
+                uploaded_file_or_df.seek(0)
+
+            if hasattr(uploaded_file_or_df, 'name') and uploaded_file_or_df.name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file_or_df, skiprows=header_row_idx)
+            else:
+                df = pd.read_excel(uploaded_file_or_df, header=header_row_idx)
+        except Exception:
+            if hasattr(uploaded_file_or_df, 'seek'):
+                uploaded_file_or_df.seek(0)
+            df = pd.read_excel(uploaded_file_or_df) if not getattr(uploaded_file_or_df, 'name', '').endswith(
+                '.csv') else pd.read_csv(uploaded_file_or_df)
+    else:
+        df = uploaded_file_or_df.copy()
+
     # Clean up column names and strip whitespace
     df.columns = [str(c).strip() for c in df.columns]
     # Drop duplicate column labels to prevent 2D DataFrame indexing traps
@@ -162,7 +191,7 @@ def process_home_health_payroll(df):
         target = None
         if "employee id" in c_lower or ("emp" in c_lower and "id" in c_lower):
             target = "Employee ID"
-        elif "employee" in c_lower or "name" in c_lower:
+        elif "employee" in c_lower or "name" in c_lower or "worker" in c_lower:
             if "patient" not in c_lower and "client" not in c_lower:
                 target = "Employee"
         elif "hour" in c_lower:
@@ -193,6 +222,11 @@ def process_home_health_payroll(df):
 
     df["Employee ID"] = pd.to_numeric(df["Employee ID"], errors="coerce").fillna(0)
     df["Hours"] = pd.to_numeric(df["Hours"], errors="coerce").fillna(0)
+    df["Employee"] = df["Employee"].astype(str).str.strip()
+
+    # Filter out rows where Employee is empty or equals agency header title
+    df = df[df["Employee"] != ""]
+    df = df[~df["Employee"].str.lower().str.contains("healing hearts|anova care|dba", na=False)]
 
     hourly_rates = {
         1351.0: 30.00,
@@ -493,7 +527,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
             df_raw = pd.read_excel(hh_file, header=None) if not hasattr(hh_file, 'name') or not hh_file.name.endswith(
                 '.csv') else pd.read_csv(hh_file, header=None)
             header_row_idx = 0
-            for r in range(min(10, len(df_raw))):
+            for r in range(min(15, len(df_raw))):
                 row_str = " ".join([str(df_raw.iloc[r, c]).lower() for c in range(len(df_raw.columns))])
                 if ('employee' in row_str or 'worker' in row_str or 'name' in row_str) and (
                         'id' in row_str or 'emp' in row_str):
@@ -738,25 +772,14 @@ elif current_tab == "Upload Data":
 
         if uploaded_file is not None:
             try:
-                if uploaded_file.name.endswith(".csv"):
-                    df = pd.read_csv(uploaded_file)
-                else:
-                    xls = pd.ExcelFile(uploaded_file)
-                    sheet_name = (
-                        "Data Export"
-                        if "Data Export" in xls.sheet_names
-                        else xls.sheet_names[0]
-                    )
-                    df = pd.read_excel(xls, sheet_name=sheet_name)
+                # Pass uploaded_file directly so processor handles smart header detection
+                processed = process_home_health_payroll(uploaded_file)
+                st.session_state.processed_df = processed
 
-                st.session_state.raw_df = df
                 st.success(
                     f"Successfully loaded Home Health file: **{uploaded_file.name}**"
-                    f" ({len(df)} rows)"
+                    f" ({len(processed)} aggregated rows)"
                 )
-
-                processed = process_home_health_payroll(df)
-                st.session_state.processed_df = processed
 
                 st.markdown("### 🔍 Live Review & Validation Preview")
                 st.dataframe(processed, use_container_width=True)
@@ -870,10 +893,7 @@ elif current_tab == "Multi-LOB Batch":
         combined_dfs = []
         if batch_hh_file is not None:
             try:
-                df_hh = pd.read_csv(batch_hh_file) if batch_hh_file.name.endswith(".csv") else pd.read_excel(
-                    batch_hh_file,
-                    sheet_name="Data Export" if "Data Export" in pd.ExcelFile(batch_hh_file).sheet_names else 0)
-                processed_hh = process_home_health_payroll(df_hh)
+                processed_hh = process_home_health_payroll(batch_hh_file)
                 processed_hh["Source LOB"] = "Home Health"
                 combined_dfs.append(processed_hh)
             except Exception as e:
@@ -1003,7 +1023,7 @@ elif current_tab == "Developer Support":
     st.markdown("""
     ### 📌 Core Business Rules & Mappings:
     1. **Home Health, Home Care & Hospice Rules**: 
-       - Automatic extraction and calculation of hours from raw time columns.
+       - Dynamic header auto-detection to automatically skip top agency metadata rows and extract true employee names.
        - Auto-generation of compound Column F identifier (`Employee Name - ID`).
        - Displays live `"Review": "✅ Validated"` status.
        - Enforces 80-hour threshold (splitting hours over 80 into Overtime).
