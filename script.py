@@ -149,27 +149,43 @@ if "batch_processed_df" not in st.session_state:
 
 # --- 1. HOME HEALTH PROCESSOR ---
 def process_home_health_payroll(uploaded_file_or_df):
-    # Dynamic Header Auto-Detection to skip agency metadata title rows
+    # Robust Flexible Header Auto-Detection
     if hasattr(uploaded_file_or_df, "read") or hasattr(uploaded_file_or_df, "name"):
         try:
-            df_raw = pd.read_excel(uploaded_file_or_df, header=None) if not getattr(uploaded_file_or_df, 'name',
-                                                                                    '').endswith(
-                '.csv') else pd.read_csv(uploaded_file_or_df, header=None)
+            if hasattr(uploaded_file_or_df, 'seek'):
+                uploaded_file_or_df.seek(0)
+
+            fname = getattr(uploaded_file_or_df, 'name', '').lower()
+            if fname.endswith('.csv'):
+                df_raw = pd.read_csv(uploaded_file_or_df, header=None)
+            else:
+                try:
+                    df_raw = pd.read_excel(uploaded_file_or_df, header=None, engine='xlrd')
+                except Exception:
+                    if hasattr(uploaded_file_or_df, 'seek'):
+                        uploaded_file_or_df.seek(0)
+                    df_raw = pd.read_excel(uploaded_file_or_df, header=None, engine='openpyxl')
+
             header_row_idx = 0
-            for r in range(min(15, len(df_raw))):
+            for r in range(min(25, len(df_raw))):
                 row_str = " ".join([str(df_raw.iloc[r, c]).lower() for c in range(len(df_raw.columns))])
-                if ('employee' in row_str or 'worker' in row_str or 'name' in row_str) and (
-                        'id' in row_str or 'emp' in row_str or 'hour' in row_str):
+                if any(k in row_str for k in ['employee', 'worker', 'staff', 'caregiver', 'emp id', 'worker id']) or (
+                        'name' in row_str and ('id' in row_str or 'hour' in row_str)):
                     header_row_idx = r
                     break
 
             if hasattr(uploaded_file_or_df, 'seek'):
                 uploaded_file_or_df.seek(0)
 
-            if hasattr(uploaded_file_or_df, 'name') and uploaded_file_or_df.name.endswith('.csv'):
+            if fname.endswith('.csv'):
                 df = pd.read_csv(uploaded_file_or_df, skiprows=header_row_idx)
             else:
-                df = pd.read_excel(uploaded_file_or_df, header=header_row_idx)
+                try:
+                    df = pd.read_excel(uploaded_file_or_df, header=header_row_idx, engine='xlrd')
+                except Exception:
+                    if hasattr(uploaded_file_or_df, 'seek'):
+                        uploaded_file_or_df.seek(0)
+                    df = pd.read_excel(uploaded_file_or_df, header=header_row_idx, engine='openpyxl')
         except Exception:
             if hasattr(uploaded_file_or_df, 'seek'):
                 uploaded_file_or_df.seek(0)
@@ -180,7 +196,6 @@ def process_home_health_payroll(uploaded_file_or_df):
 
     # Clean up column names and strip whitespace
     df.columns = [str(c).strip() for c in df.columns]
-    # Drop duplicate column labels to prevent 2D DataFrame indexing traps
     df = df.loc[:, ~df.columns.duplicated()]
 
     # Map columns safely ensuring unique target mapping
@@ -189,9 +204,9 @@ def process_home_health_payroll(uploaded_file_or_df):
     for c in df.columns:
         c_lower = str(c).lower()
         target = None
-        if "employee id" in c_lower or ("emp" in c_lower and "id" in c_lower):
+        if "employee id" in c_lower or ("emp" in c_lower and "id" in c_lower) or "worker id" in c_lower:
             target = "Employee ID"
-        elif "employee" in c_lower or "name" in c_lower or "worker" in c_lower:
+        elif "employee" in c_lower or "name" in c_lower or "worker" in c_lower or "staff" in c_lower:
             if "patient" not in c_lower and "client" not in c_lower:
                 target = "Employee"
         elif "hour" in c_lower:
@@ -226,7 +241,7 @@ def process_home_health_payroll(uploaded_file_or_df):
 
     # Filter out rows where Employee is empty or equals agency header title
     df = df[df["Employee"] != ""]
-    df = df[~df["Employee"].str.lower().str.contains("healing hearts|anova care|dba", na=False)]
+    df = df[~df["Employee"].str.lower().str.contains("healing hearts|anova care|dba|unnamed", na=False)]
 
     hourly_rates = {
         1351.0: 30.00,
@@ -527,10 +542,10 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
             df_raw = pd.read_excel(hh_file, header=None) if not hasattr(hh_file, 'name') or not hh_file.name.endswith(
                 '.csv') else pd.read_csv(hh_file, header=None)
             header_row_idx = 0
-            for r in range(min(15, len(df_raw))):
+            for r in range(min(25, len(df_raw))):
                 row_str = " ".join([str(df_raw.iloc[r, c]).lower() for c in range(len(df_raw.columns))])
-                if ('employee' in row_str or 'worker' in row_str or 'name' in row_str) and (
-                        'id' in row_str or 'emp' in row_str):
+                if any(k in row_str for k in ['employee', 'worker', 'staff', 'caregiver', 'emp id', 'worker id']) or (
+                        'name' in row_str and ('id' in row_str or 'hour' in row_str)):
                     header_row_idx = r
                     break
 
@@ -772,7 +787,6 @@ elif current_tab == "Upload Data":
 
         if uploaded_file is not None:
             try:
-                # Pass uploaded_file directly so processor handles smart header detection
                 processed = process_home_health_payroll(uploaded_file)
                 st.session_state.processed_df = processed
 
@@ -1023,7 +1037,7 @@ elif current_tab == "Developer Support":
     st.markdown("""
     ### 📌 Core Business Rules & Mappings:
     1. **Home Health, Home Care & Hospice Rules**: 
-       - Dynamic header auto-detection to automatically skip top agency metadata rows and extract true employee names.
+       - Flexible header auto-detection scanning up to 25 rows to reliably skip agency metadata rows and extract employee names.
        - Auto-generation of compound Column F identifier (`Employee Name - ID`).
        - Displays live `"Review": "✅ Validated"` status.
        - Enforces 80-hour threshold (splitting hours over 80 into Overtime).
