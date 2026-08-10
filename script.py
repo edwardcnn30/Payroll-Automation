@@ -819,7 +819,7 @@ elif current_tab == "Upload Data":
 elif current_tab == "Multi-LOB Batch":
     st.markdown("### ⚡ Enterprise Multi-LOB Batch Processing Pipeline")
     st.write(
-        "Upload all departmental files simultaneously. Hospice reconciliation will automatically filter out duplicate entries from the Home Health master file, ensuring clean, audit-ready Paychex exports.")
+        "Upload all departmental files simultaneously. Hospice reconciliation will filter out duplicate **Hourly/Overtime** entries from the Home Health master file while **retaining PRN Points**, ensuring clean, audit-ready Paychex exports.")
 
     col_b1, col_b2, col_b3 = st.columns(3)
     with col_b1:
@@ -842,12 +842,12 @@ elif current_tab == "Multi-LOB Batch":
                 if not hospice_processed.empty:
                     hospice_processed["LOB"] = "Hospice"
 
-            # Extract worker IDs processed under Hospice to prevent duplication in Home Health
+            # Extract worker IDs processed under Hospice
             hospice_worker_ids = set()
             if not hospice_processed.empty and "Worker ID" in hospice_processed.columns:
                 hospice_worker_ids = set(hospice_processed["Worker ID"].dropna().astype(str).str.strip())
 
-            # 2. Process Home Health (Filtering out Hospice workers)
+            # 2. Process Home Health (Filtering out hourly workers in Hospice, but keeping PRN Points)
             if batch_hh_file is not None:
                 if batch_hh_file.name.endswith(".csv"):
                     hh_raw = pd.read_csv(batch_hh_file)
@@ -860,8 +860,11 @@ elif current_tab == "Multi-LOB Batch":
 
                 if hospice_worker_ids and "Worker ID" in hh_temp_processed.columns:
                     hh_temp_processed["_worker_str"] = hh_temp_processed["Worker ID"].astype(str).str.strip()
-                    hh_processed = hh_temp_processed[~hh_temp_processed["_worker_str"].isin(hospice_worker_ids)].drop(
-                        columns=["_worker_str"])
+                    # Filter out only if they are Hourly/Overtime in Home Health; retain PRN Points
+                    is_hospice_worker = hh_temp_processed["_worker_str"].isin(hospice_worker_ids)
+                    is_prn = hh_temp_processed["Pay Component"] == "PRN Points"
+
+                    hh_processed = hh_temp_processed[~is_hospice_worker | is_prn].drop(columns=["_worker_str"])
                 else:
                     hh_processed = hh_temp_processed
 
@@ -887,7 +890,7 @@ elif current_tab == "Multi-LOB Batch":
                 st.session_state.processed_df = final_batch_df
 
                 st.success(
-                    "Enterprise batch processing completed successfully with duplicate Hospice filtering applied!")
+                    "Enterprise batch processing completed successfully with Hospice hourly filtering and PRN Point retention applied!")
 
                 st.markdown("### 🔍 Consolidated Batch Output Preview")
                 st.dataframe(final_batch_df, use_container_width=True)
