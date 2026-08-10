@@ -156,7 +156,7 @@ def process_home_health_payroll(df):
         1279.0: 45.00,
         1307.0: 25.00,
         1067.0: 46.00,
-        1162.0: 50.00,
+        # 1162.0 (Maggie Simowski) removed so MSW tasks are processed as PRN Points
         1389.0: 40.00,
         1358.0: 40.00,
         800.0: 25.00,
@@ -819,7 +819,7 @@ elif current_tab == "Upload Data":
 elif current_tab == "Multi-LOB Batch":
     st.markdown("### ⚡ Enterprise Multi-LOB Batch Processing Pipeline")
     st.write(
-        "Upload all departmental files simultaneously. Hospice reconciliation will filter out duplicate **Hourly/Overtime** entries from the Home Health master file while **retaining PRN Points**, ensuring clean, audit-ready Paychex exports.")
+        "Upload all departmental files simultaneously. Hospice reconciliation will filter out duplicate hourly entries from the Home Health master file while **retaining PRN Points (such as MSW task amounts for Maggie Simowski and others)**.")
 
     col_b1, col_b2, col_b3 = st.columns(3)
     with col_b1:
@@ -860,7 +860,6 @@ elif current_tab == "Multi-LOB Batch":
 
                 if hospice_worker_ids and "Worker ID" in hh_temp_processed.columns:
                     hh_temp_processed["_worker_str"] = hh_temp_processed["Worker ID"].astype(str).str.strip()
-                    # Filter out only if they are Hourly/Overtime in Home Health; retain PRN Points
                     is_hospice_worker = hh_temp_processed["_worker_str"].isin(hospice_worker_ids)
                     is_prn = hh_temp_processed["Pay Component"] == "PRN Points"
 
@@ -890,7 +889,7 @@ elif current_tab == "Multi-LOB Batch":
                 st.session_state.processed_df = final_batch_df
 
                 st.success(
-                    "Enterprise batch processing completed successfully with Hospice hourly filtering and PRN Point retention applied!")
+                    "Enterprise batch processing completed successfully with PRN Points and Hospice reconciliation fully aligned!")
 
                 st.markdown("### 🔍 Consolidated Batch Output Preview")
                 st.dataframe(final_batch_df, use_container_width=True)
