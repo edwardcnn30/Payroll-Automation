@@ -279,6 +279,13 @@ def process_home_care_payroll(df):
     if "Pay Component" not in df.columns:
         df["Pay Component"] = ""
 
+    # Convert columns to object type to prevent strict float64 assignment errors in pandas
+    for col in ["Hours", "Rate", "Amount", "Units", "Pay Component"]:
+        if col not in df.columns:
+            df[col] = ""
+        else:
+            df[col] = df[col].astype(object)
+
     for index, row in df.iterrows():
         comp = str(row.get("Pay Component", "")).strip().lower()
         rate = pd.to_numeric(row.get("Rate"), errors="coerce")
@@ -297,13 +304,14 @@ def process_home_care_payroll(df):
 
     df["Hours"] = pd.to_numeric(df["Hours"], errors="coerce").fillna(0)
     df["Rate"] = pd.to_numeric(df["Rate"], errors="coerce").fillna(0)
+    df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
 
     for index, row in df.iterrows():
         comp = row.get("Pay Component")
         if comp != "MILEAGE REIMB" and (pd.isna(comp) or str(comp).strip() == ""):
             df.at[index, "Pay Component"] = "Overtime"
 
-        if pd.isna(row.get("Amount")) or row.get("Amount") == "":
+        if pd.isna(row.get("Amount")) or row.get("Amount") == 0:
             hrs = row.get("Hours", 0)
             rt = row.get("Rate", 0)
             if hrs > 0 and rt > 0:
