@@ -246,7 +246,7 @@ def process_home_health_payroll(df):
             mileage_row["Rate"] = 0.73
             mileage_row["Hours"] = ""
             mileage_row["Units"] = mileage
-            mileage_row["Amount"] = round(mileage * 0.73, 2)
+            mileage_row["Amount"] = ""  # Amount cleared for Paychex calculation
             mileage_rows.append(mileage_row)
 
     # Filter out PRN Points rows where Amount is 0, empty, or null
@@ -428,7 +428,7 @@ def process_home_care_payroll(df):
                 "Hours": "",
                 "Units": mileage_units,
                 "Line Date": "",
-                "Amount": "",  # Cleared final amount for Home Care side
+                "Amount": "",
                 "Check": "",
                 "Override State": "",
                 "Override Local": "",
@@ -648,7 +648,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     "Hours": "",
                     "Units": total_miles,
                     "Line Date": "",
-                    "Amount": round(total_miles * 0.73, 2),
+                    "Amount": "",  # Amount cleared for Paychex calculation
                     "Check": "",
                     "Override State": "",
                     "Override Local": "",
@@ -911,13 +911,13 @@ elif current_tab == "Developer Support":
     st.markdown("## ⚙️ Developer Support & Documentation")
     st.markdown("""
     ### 📌 Core Business Rules & Mappings:
-    1. **Home Health & Home Care Rules**: 
+    1. **Home Health, Home Care & Hospice Rules**: 
        - Displays live `"Review": "✅ Validated"` status.
        - Enforces 80-hour threshold (splitting hours over 80 into Overtime).
        - Blank Pay Components automatically tagged as Overtime.
-       - Amount column left blank (`""`) for Hourly, Overtime, and Home Care rows.
+       - Amount column left blank (`""`) for Hourly, Overtime, Home Care rows, and Mileage rows (leaving calculation to Paychex).
        - PRN Points with zero amounts are automatically filtered out.
-       - Mileage tagged as **MILEAGE REIMB** at `0.73`.
+       - Mileage tagged as **MILEAGE REIMB** at rate `0.73` with units populated and Amount left blank.
     2. **Export Center**:
        - Automatically strips out `Review` and tracking columns upon download to guarantee 100% Paychex compatibility.
     """)
