@@ -246,10 +246,9 @@ def process_home_health_payroll(df):
             mileage_row["Rate"] = 0.73
             mileage_row["Hours"] = ""
             mileage_row["Units"] = mileage
-            mileage_row["Amount"] = ""  # Amount cleared for Paychex calculation
+            mileage_row["Amount"] = ""
             mileage_rows.append(mileage_row)
 
-    # Filter out PRN Points rows where Amount is 0, empty, or null
     prn_rows = [r for r in prn_rows if pd.notnull(r["Amount"]) and r["Amount"] != "" and r["Amount"] != 0]
 
     prn_rows = sorted(prn_rows, key=lambda x: x["_EmployeeName"])
@@ -299,7 +298,6 @@ def process_home_care_payroll(df):
 
     df = df.rename(columns=col_map)
 
-    # Safeguard: Ensure DataFrame columns are uniquely 1D Series
     for col in ['Worker ID', 'Employee', 'Pay Component', 'Rate', 'Hours', 'Amount', 'Units']:
         if col in df.columns and isinstance(df[col], pd.DataFrame):
             df[col] = df[col].iloc[:, 0]
@@ -648,7 +646,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     "Hours": "",
                     "Units": total_miles,
                     "Line Date": "",
-                    "Amount": "",  # Amount cleared for Paychex calculation
+                    "Amount": "",
                     "Check": "",
                     "Override State": "",
                     "Override Local": "",
@@ -874,12 +872,31 @@ elif current_tab == "Multi-LOB Batch":
 
         st.markdown("---")
         st.markdown("### 📊 Business-Level LOB Totals Summary")
-        st.write("Aggregated totals across each Line of Business and Grand Totals:")
+        st.write(
+            "Aggregated totals across each Line of Business (calculated from employee earnings: Hours × Rate, Mileage reimbursements, and PRN amounts):")
 
         summary_df = st.session_state.batch_processed_df.copy()
+
+
+        # Calculate true earnings per row (since export amount columns are left blank for Paychex import)
+        def calculate_total_pay(row):
+            comp = str(row.get("Pay Component", "")).lower()
+            hrs = pd.to_numeric(row.get("Hours", 0), errors="coerce") or 0.0
+            rate = pd.to_numeric(row.get("Rate", 0), errors="coerce") or 0.0
+            units = pd.to_numeric(row.get("Units", 0), errors="coerce") or 0.0
+            amount = pd.to_numeric(row.get("Amount", 0), errors="coerce") or 0.0
+
+            if "mileage" in comp or rate == 0.73:
+                return units * 0.73
+            elif amount > 0 and comp == "prn points":
+                return amount
+            else:
+                return hrs * rate
+
+
+        summary_df["Calculated_Amount"] = summary_df.apply(calculate_total_pay, axis=1)
         summary_df["Hours"] = pd.to_numeric(summary_df["Hours"], errors="coerce").fillna(0)
         summary_df["Units"] = pd.to_numeric(summary_df["Units"], errors="coerce").fillna(0)
-        summary_df["Amount"] = pd.to_numeric(summary_df["Amount"], errors="coerce").fillna(0)
 
         # Group strictly by LOB for high-level business totals
         lob_summary = (
@@ -887,17 +904,26 @@ elif current_tab == "Multi-LOB Batch":
             .agg(
                 Total_Hours=("Hours", "sum"),
                 Total_Mileage_Units=("Units", "sum"),
-                Total_Amount=("Amount", "sum"),
+                Total_Amount=("Calculated_Amount", "sum"),
             )
             .reset_index()
         )
 
-        # Add Grand Total Row
+        # Format values for clean executive presentation
+        lob_summary["Total_Amount"] = lob_summary["Total_Amount"].apply(lambda x: f"${x:,.2f}")
+        lob_summary["Total_Hours"] = lob_summary["Total_Hours"].apply(lambda x: f"{x:,.2f}")
+        lob_summary["Total_Mileage_Units"] = lob_summary["Total_Mileage_Units"].apply(lambda x: f"{x:,.2f}")
+
+        # Add Grand Total Row based on raw numeric aggregations
+        raw_amounts = summary_df.groupby("Source LOB")["Calculated_Amount"].sum()
+        raw_hours = summary_df.groupby("Source LOB")["Hours"].sum()
+        raw_units = summary_df.groupby("Source LOB")["Units"].sum()
+
         grand_total_row = pd.DataFrame({
             "Source LOB": ["Grand Total"],
-            "Total_Hours": [lob_summary["Total_Hours"].sum()],
-            "Total_Mileage_Units": [lob_summary["Total_Mileage_Units"].sum()],
-            "Total_Amount": [lob_summary["Total_Amount"].sum()]
+            "Total_Hours": [f"{raw_hours.sum():,.2f}"],
+            "Total_Mileage_Units": [f"{raw_units.sum():,.2f}"],
+            "Total_Amount": [f"${raw_amounts.sum():,.2f}"]
         })
 
         final_summary_display = pd.concat([lob_summary, grand_total_row], ignore_index=True)
@@ -913,7 +939,6 @@ elif current_tab == "Export Center":
     if st.session_state.processed_df is not None:
         df_export = st.session_state.processed_df.copy()
 
-        # Strip Review and internal helper columns for clean Paychex import output
         cols_to_remove = ["Review", "_EmployeeName", "Source LOB"]
         for col in cols_to_remove:
             if col in df_export.columns:
