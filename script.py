@@ -227,7 +227,7 @@ def process_home_health_payroll(df):
         ot_hours = total_hours - 80.0
         ot_row = base_row_data.copy()
         ot_row["Pay Component"] = "Overtime"
-        ot_row["Rate"] = rate * 1.5 if rate else ""
+        ot_row["Rate"] = rate if rate else ""  # Retain original rate
         ot_row["Hours"] = ot_hours
         overtime_rows.append(ot_row)
       else:
@@ -468,7 +468,7 @@ elif current_tab == "Developer Support":
     1. **Home Health Rules**: 
        - PRN Points employees sorted alphabetically.
        - Hourly employees sorted alphabetically (capped at 80 hours).
-       - Overtime entries for hourly exceeding 80 hours.
+       - Overtime entries for hourly exceeding 80 hours (retaining original rate).
        - Mileage entries at the bottom at **0.73** rate.
     2. **Home Care Rules**:
        - Evaluates pre-formatted Paychex ready files.
