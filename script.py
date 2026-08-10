@@ -1,4 +1,5 @@
 import io
+import re
 import pandas as pd
 import streamlit as st
 
@@ -331,22 +332,50 @@ def process_home_care_payroll(df):
 
 
 # --- 3. HOSPICE RECONCILIATION PROCESSOR ---
-def process_hospice_reconciliation(hh_df, timesheet_files):
-    hh_df.columns = [str(c).strip() for c in hh_df.columns]
+def process_hospice_reconciliation(hh_file, timesheet_files):
+    # Authoritative explicit mapping dictionary based on exact roster
+    authoritative_id_map = {
+        "simowski, maggie": 1162, "maggie simowski": 1162, "maggies": 1162, "maggie": 1162, "simowski": 1162,
+        "cecil, katherine": 1351, "katherine cecil": 1351, "katherines": 1351, "katherine": 1351, "cecil": 1351,
+        "cooper, jenifer": 1414, "jenifer cooper": 1414, "coopers": 1414, "cooper": 1414, "jenifer": 1414,
+        "smith, gene": 1175, "gene smith": 1175, "smith": 1175, "gene": 1175,
+        "kendle, alexias b (brandy)": 1242, "alexias kendle": 1242, "brandy": 1242, "brandys": 1242, "alexias": 1242,
+        "kendle": 1242,
+        "escobar ortega, ana m": 1388, "ana m escobar ortega": 1388, "ana": 1388, "ana e": 1388, "escobar": 1388,
+        "bullock, monica": 1300, "monica bullock": 1300, "bullock": 1300, "monica": 1300
+    }
 
-    # Identify employee and ID columns robustly
-    emp_col = next(
-        (c for c in hh_df.columns if 'employee' in c.lower() or 'name' in c.lower() or 'worker' in c.lower()),
-        hh_df.columns[0])
-    id_col = next((c for c in hh_df.columns if 'id' in c.lower() or 'emp' in c.lower() or 'worker' in c.lower()),
-                  hh_df.columns[1] if len(hh_df.columns) > 1 else hh_df.columns[0])
+    id_mapping = authoritative_id_map.copy()
+    if hh_file is not None:
+        try:
+            df_raw = pd.read_excel(hh_file, header=None) if not hasattr(hh_file, 'name') or not hh_file.name.endswith(
+                '.csv') else pd.read_csv(hh_file, header=None)
+            header_row_idx = 0
+            for r in range(min(10, len(df_raw))):
+                row_str = " ".join([str(df_raw.iloc[r, c]).lower() for c in range(len(df_raw.columns))])
+                if ('employee' in row_str or 'worker' in row_str or 'name' in row_str) and (
+                        'id' in row_str or 'emp' in row_str):
+                    header_row_idx = r
+                    break
 
-    id_mapping = {}
-    for _, row in hh_df.iterrows():
-        emp_name = str(row.get(emp_col, "")).strip().lower()
-        emp_id = row.get(id_col)
-        if emp_name and pd.notnull(emp_id):
-            id_mapping[emp_name] = emp_id
+            hh_df = pd.read_csv(hh_file, skiprows=header_row_idx) if hasattr(hh_file, 'name') and hh_file.name.endswith(
+                '.csv') else pd.read_excel(hh_file, header=header_row_idx)
+            hh_df.columns = [str(c).strip() for c in hh_df.columns]
+
+            emp_col = next(
+                (c for c in hh_df.columns if 'employee' in c.lower() or 'name' in c.lower() or 'worker' in c.lower()),
+                hh_df.columns[0])
+            id_col = next(
+                (c for c in hh_df.columns if 'id' in c.lower() or 'emp' in c.lower() or 'worker' in c.lower()),
+                hh_df.columns[1] if len(hh_df.columns) > 1 else hh_df.columns[0])
+
+            for _, row in hh_df.iterrows():
+                emp_name = str(row.get(emp_col, "")).strip().lower()
+                emp_id = row.get(id_col)
+                if emp_name and pd.notnull(emp_id):
+                    id_mapping[emp_name] = emp_id
+        except Exception:
+            pass
 
     all_reconciled_rows = []
 
@@ -358,12 +387,11 @@ def process_hospice_reconciliation(hh_df, timesheet_files):
             file_base = ts_file.name.split(".")[0]
             file_lower = file_base.lower()
 
-            # Extract employee name from the timesheet header if present, else fallback to filename
             ts_employee_name = ""
             for r_idx in range(min(5, len(df_ts))):
                 for c_idx in range(len(df_ts.columns)):
                     cell_val = str(df_ts.iloc[r_idx, c_idx]).strip()
-                    if cell_val and cell_val.lower() not in ["nan", "none", "employee", "name", "worker"]:
+                    if cell_val and cell_val.lower() not in ["nan", "none", "employee", "name", "worker", "client"]:
                         for k in id_mapping.keys():
                             if k in cell_val.lower() or cell_val.lower() in k:
                                 ts_employee_name = k
@@ -373,35 +401,32 @@ def process_hospice_reconciliation(hh_df, timesheet_files):
                 if ts_employee_name:
                     break
 
-            worker_id = ""
-            matched_key = ""
-
-            # 1. Try matching extracted name or filename against master keys
-            search_targets = [ts_employee_name, file_lower]
-            for target in search_targets:
-                if not target:
-                    continue
+            def resolve_worker_id(search_target):
+                target_lower = str(search_target).lower()
                 for k, v in id_mapping.items():
-                    if k in target or target in k:
-                        worker_id = v
-                        matched_key = k
-                        break
-                if worker_id:
-                    break
+                    if k in target_lower or target_lower in k:
+                        return v, k
 
-            # 2. Token-based fallback matching
+                target_tokens = set(re.findall(r'\b[a-z]{3,}\b', target_lower))
+                best_id = None
+                best_key = ""
+                max_overlap = 0
+
+                for k, v in id_mapping.items():
+                    key_tokens = set(re.findall(r'\b[a-z]{3,}\b', k))
+                    overlap = len(target_tokens.intersection(key_tokens))
+                    if overlap > max_overlap:
+                        max_overlap = overlap
+                        best_id = v
+                        best_key = k
+
+                if max_overlap > 0:
+                    return best_id, best_key
+                return None, ""
+
+            worker_id, matched_key = resolve_worker_id(ts_employee_name)
             if not worker_id:
-                for target in search_targets:
-                    if not target:
-                        continue
-                    tokens = [t for t in target.split() if len(t) > 2]
-                    for k, v in id_mapping.items():
-                        if any(t in k for t in tokens):
-                            worker_id = v
-                            matched_key = k
-                            break
-                    if worker_id:
-                        break
+                worker_id, matched_key = resolve_worker_id(file_lower)
 
             hours_row_idx = -1
             rate_row_idx = -1
@@ -640,7 +665,7 @@ elif current_tab == "Upload Data":
     else:  # Hospice Reconciliation
         st.markdown("### 🕊️ Hospice Reconciliation Workflow")
         st.write(
-            "Upload the **Home Health Master File** (to map Worker IDs) and your"
+            "Upload the **Home Health Master File** (optional fallback) and your"
             " **Hospice Timesheets** (7-15 files at once) to reconcile hours,"
             " split overtime over 80 hours, and capture official mileage."
         )
@@ -648,7 +673,7 @@ elif current_tab == "Upload Data":
         col1, col2 = st.columns(2)
         with col1:
             hh_master_file = st.file_uploader(
-                "1. Upload Home Health Master File", type=["xls", "xlsx", "csv"], key="hospice_hh_master"
+                "1. Upload Home Health Master File (Optional)", type=["xls", "xlsx", "csv"], key="hospice_hh_master"
             )
         with col2:
             timesheet_files = st.file_uploader(
@@ -658,28 +683,19 @@ elif current_tab == "Upload Data":
                 key="hospice_ts_files",
             )
 
-        if hh_master_file is not None and timesheet_files:
+        if timesheet_files:
             try:
-                if hh_master_file.name.endswith(".csv"):
-                    hh_df = pd.read_csv(hh_master_file)
-                else:
-                    xls = pd.ExcelFile(hh_master_file)
-                    hh_df = pd.read_excel(xls, sheet_name=xls.sheet_names[0])
-
-                st.success(
-                    f"Loaded Master Home Health File & {len(timesheet_files)} Hospice Timesheets successfully!"
-                )
-
-                processed = process_hospice_reconciliation(hh_df, timesheet_files)
+                processed = process_hospice_reconciliation(hh_master_file, timesheet_files)
                 st.session_state.processed_df = processed
 
+                st.success(f"Reconciled {len(timesheet_files)} Hospice Timesheets successfully!")
                 st.markdown("### 🔍 Comparison & Reconciled Output Preview")
                 st.dataframe(processed, use_container_width=True)
 
             except Exception as e:
                 st.error(f"Error running Hospice reconciliation: {e}")
         else:
-            st.info("Please upload both the Home Health Master file and at least one Hospice timesheet to begin.")
+            st.info("Please upload at least one Hospice timesheet to begin.")
 
 elif current_tab == "Export Center":
     st.markdown("## 📥 Export Center")
@@ -724,7 +740,7 @@ elif current_tab == "Developer Support":
        - Hourly rows are aggregated per Worker ID and any total hours over 80 are split into **Overtime**.
        - Mileage entries normalized to **MILEAGE REIMBURSEMENT**.
     3. **Hospice Reconciliation Rules**:
-       - Matches hospice timesheets against Home Health master data by scanning internal cell headers as well as filenames to fetch Worker IDs.
+       - Uses an authoritative employee reference directory alongside automated content scanning to match and populate correct Worker IDs.
        - Enforces the 80-hour threshold across multiple rates per employee, retaining original rates for overtime.
        - Replaces home health mileage with official timesheet mileage tagged as **MILEAGE REIMBURSEMENT** (`Units * 0.73`).
     """)
