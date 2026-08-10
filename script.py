@@ -267,32 +267,45 @@ def process_home_care_payroll(df):
     df.columns = [str(c).strip() for c in df.columns]
 
     col_map = {}
+    used_targets = set()
     for c in df.columns:
         c_lower = c.lower()
-        if 'worker' in c_lower and 'id' in c_lower:
-            col_map[c] = 'Worker ID'
-        elif 'employee' in c_lower or 'name' in c_lower:
-            col_map[c] = 'Employee'
-        elif 'component' in c_lower or 'pay comp' in c_lower:
-            col_map[c] = 'Pay Component'
-        elif 'rate' in c_lower:
-            col_map[c] = 'Rate'
-        elif 'hour' in c_lower:
-            col_map[c] = 'Hours'
-        elif 'amount' in c_lower:
-            col_map[c] = 'Amount'
-        elif 'unit' in c_lower:
-            col_map[c] = 'Units'
-        elif 'client' in c_lower and 'id' in c_lower:
-            col_map[c] = 'Client ID'
-        elif 'labor' in c_lower or 'override' in c_lower:
-            col_map[c] = 'Labor Override'
+        target = None
+        if "worker" in c_lower and "id" in c_lower:
+            target = "Worker ID"
+        elif "employee" in c_lower or ("name" in c_lower and "client" not in c_lower):
+            target = "Employee"
+        elif "component" in c_lower or "pay comp" in c_lower:
+            target = "Pay Component"
+        elif "rate" in c_lower:
+            target = "Rate"
+        elif "hour" in c_lower:
+            target = "Hours"
+        elif "amount" in c_lower:
+            target = "Amount"
+        elif "unit" in c_lower:
+            target = "Units"
+        elif "client" in c_lower and "id" in c_lower:
+            target = "Client ID"
+        elif "labor" in c_lower or "override" in c_lower:
+            target = "Labor Override"
+
+        if target and target not in used_targets:
+            col_map[c] = target
+            used_targets.add(target)
 
     df = df.rename(columns=col_map)
+
+    # Safeguard: Ensure DataFrame columns are uniquely 1D Series
+    for col in ['Worker ID', 'Employee', 'Pay Component', 'Rate', 'Hours', 'Amount', 'Units']:
+        if col in df.columns and isinstance(df[col], pd.DataFrame):
+            df[col] = df[col].iloc[:, 0]
 
     if 'Worker ID' not in df.columns:
         id_col = next((c for c in df.columns if 'id' in c.lower()), df.columns[0])
         df = df.rename(columns={id_col: 'Worker ID'})
+        if isinstance(df['Worker ID'], pd.DataFrame):
+            df['Worker ID'] = df['Worker ID'].iloc[:, 0]
 
     if 'Hours' not in df.columns:
         df['Hours'] = 0.0
@@ -331,7 +344,7 @@ def process_home_care_payroll(df):
             else:
                 if comp == '' or comp_lower == 'nan' or comp_lower == 'none':
                     total_worker_hours += hours
-                    other_rows.append(('Overtime' if total_worker_hours > 80 else 'Overtime', rate, hours))
+                    other_rows.append(('Overtime', rate, hours))
                 elif 'overtime' in comp_lower or 'ot' in comp_lower:
                     total_worker_hours += hours
                     other_rows.append(('Overtime', rate, hours))
@@ -609,7 +622,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                             ot_item["Pay Component"] = "Overtime"
                             ot_item["Hours"] = ot_hours
                             ot_item["Amount"] = ""
-                            overtime_rows_list = [ot_item]  # container
                             all_reconciled_rows.append(ot_item)
                             accumulated_hours = 80.0
                     else:
