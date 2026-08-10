@@ -282,13 +282,18 @@ def process_home_care_payroll(df):
     for index, row in df.iterrows():
         comp = str(row.get("Pay Component", "")).strip().lower()
         rate = pd.to_numeric(row.get("Rate"), errors="coerce")
+
         if comp in ["mileage", "miles", "mileage reimbursement", "mileage reimb"] or (
                 not pd.isna(rate) and rate == 0.73):
+            hrs_val = pd.to_numeric(row.get("Hours"), errors="coerce")
+            if pd.isna(hrs_val):
+                hrs_val = 0.0
+
             df.at[index, "Pay Component"] = "MILEAGE REIMB"
-            df.at[index, "Units"] = row["Hours"]
+            df.at[index, "Units"] = hrs_val
             df.at[index, "Hours"] = ""
             df.at[index, "Rate"] = 0.73
-            df.at[index, "Amount"] = round(float(row["Hours"]) * 0.73, 2)
+            df.at[index, "Amount"] = round(hrs_val * 0.73, 2)
 
     df["Hours"] = pd.to_numeric(df["Hours"], errors="coerce").fillna(0)
     df["Rate"] = pd.to_numeric(df["Rate"], errors="coerce").fillna(0)
