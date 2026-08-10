@@ -9,7 +9,7 @@ st.set_page_config(
 
 # Initialize Query Params for Navigation
 if "tab" not in st.query_params:
-  st.query_params["tab"] = "Home"
+    st.query_params["tab"] = "Home"
 current_tab = st.query_params["tab"]
 
 # Custom Styling for Dark Theme & Original UI Match
@@ -20,10 +20,8 @@ st.markdown(
         background-color: #0e1117;
         color: #ffffff;
     }
-    /* Hide default Streamlit top header */
     header {visibility: hidden;}
 
-    /* Sleek Top Navigation Bar matching screenshot */
     .app-header {
         display: flex;
         justify-content: space-between;
@@ -139,222 +137,346 @@ st.markdown(
 
 # Initialize Session State
 if "processed_df" not in st.session_state:
-  st.session_state.processed_df = None
+    st.session_state.processed_df = None
 if "raw_df" not in st.session_state:
-  st.session_state.raw_df = None
+    st.session_state.raw_df = None
 
 
-# Helper: Process Payroll into Paychex Import Template Format
-def process_payroll_data(df):
-  hourly_rates = {
-      1351.0: 30.00,  # Cecil, Katherine
-      1331.0: 40.00,  # Conner, Autumn
-      1175.0: 28.00,  # Gene, Smith
-      1279.0: 45.00,  # Johann, Jasmine
-      1307.0: 25.00,  # Kogn, Alay
-      1067.0: 46.00,  # Seiger, Rachel
-      1162.0: 50.00,  # Simowski, Maggie
-      1389.0: 40.00,  # Webb, Detrecia
-      1358.0: 40.00,  # Wright, Sarah
-      800.0: 25.00,  # Fethke, Alicia
-  }
-
-  if "Mileage" not in df.columns:
-    df["Mileage"] = 0.0
-
-  def classify_and_calculate(row):
-    emp_id = row["Employee ID"]
-    if emp_id in hourly_rates:
-      rate = hourly_rates[emp_id]
-      amount = row["Hours"] * rate
-      pay_type = "Hourly"
-      return rate, amount, pay_type
-    else:
-      return row["Rate"], row["Amount"], "PRN Points"
-
-  results = df.apply(classify_and_calculate, axis=1)
-  df["Rate"] = [r[0] for r in results]
-  df["Amount"] = [r[1] for r in results]
-  df["Pay Type"] = [r[2] for r in results]
-
-  summary = (
-      df.groupby(["Employee ID", "Employee", "Pay Type"])
-      .agg({"Hours": "sum", "Amount": "sum", "Rate": "first", "Mileage": "sum"})
-      .reset_index()
-  )
-
-  prn_rows = []
-  hourly_rows = []
-  overtime_rows = []
-  mileage_rows = []
-
-  for _, row in summary.iterrows():
-    emp_id = int(row["Employee ID"]) if pd.notnull(row["Employee ID"]) else ""
-    emp_name = row["Employee"]
-    pay_type = row["Pay Type"]
-    total_hours = row["Hours"]
-    total_amount = row["Amount"]
-    rate = row["Rate"]
-    mileage = row["Mileage"]
-
-    labor_override = f"{emp_name} - {emp_id} ({emp_id})" if emp_id else emp_name
-
-    base_row_data = {
-        "Review": "✅ Validated",
-        "Client ID": 16068715,
-        "Worker ID": emp_id,
-        "Org": "",
-        "Job Num": "",
-        "Pay Comp Rate": pay_type,
-        "Rate Num": rate if pay_type == "Hourly" else "",
-        "Hours": total_hours if pay_type == "Hourly" else "",
-        "Units": "",
-        "Line Date": "",
-        "Amount": total_amount if pay_type == "PRN Points" else "",
-        "Check": "",
-        "Override S": "",
-        "Override L": "",
-        "Labor Override": labor_override,
-        "_EmployeeName": emp_name,
+# --- 1. HOME HEALTH PROCESSOR (Untouched) ---
+def process_home_health_payroll(df):
+    hourly_rates = {
+        1351.0: 30.00,
+        1331.0: 40.00,
+        1175.0: 28.00,
+        1279.0: 45.00,
+        1307.0: 25.00,
+        1067.0: 46.00,
+        1162.0: 50.00,
+        1389.0: 40.00,
+        1358.0: 40.00,
+        800.0: 25.00,
     }
 
-    if pay_type == "PRN Points":
-      prn_rows.append(base_row_data)
-    elif pay_type == "Hourly":
-      if total_hours > 80:
-        reg_row = base_row_data.copy()
-        reg_row["Hours"] = 80.0
-        hourly_rows.append(reg_row)
+    if "Mileage" not in df.columns:
+        df["Mileage"] = 0.0
 
-        ot_hours = total_hours - 80.0
-        ot_row = base_row_data.copy()
-        ot_row["Pay Comp Rate"] = "Overtime"
-        ot_row["Rate Num"] = rate * 1.5 if rate else ""
-        ot_row["Hours"] = ot_hours
-        overtime_rows.append(ot_row)
-      else:
-        hourly_rows.append(base_row_data)
+    def classify_and_calculate(row):
+        emp_id = row["Employee ID"]
+        if emp_id in hourly_rates:
+            rate = hourly_rates[emp_id]
+            amount = row["Hours"] * rate
+            pay_type = "Hourly"
+            return rate, amount, pay_type
+        else:
+            return row["Rate"], row["Amount"], "PRN Points"
 
-    if mileage > 0:
-      mileage_row = base_row_data.copy()
-      mileage_row["Pay Comp Rate"] = "Mileage"
-      mileage_row["Rate Num"] = 0.73
-      mileage_row["Hours"] = ""
-      mileage_row["Units"] = mileage
-      mileage_row["Amount"] = round(mileage * 0.73, 2)
-      mileage_rows.append(mileage_row)
+    results = df.apply(classify_and_calculate, axis=1)
+    df["Rate"] = [r[0] for r in results]
+    df["Amount"] = [r[1] for r in results]
+    df["Pay Type"] = [r[2] for r in results]
 
-  # Sort all sections alphabetically by Employee Name
-  prn_rows = sorted(prn_rows, key=lambda x: x["_EmployeeName"])
-  hourly_rows = sorted(hourly_rows, key=lambda x: x["_EmployeeName"])
-  overtime_rows = sorted(overtime_rows, key=lambda x: x["_EmployeeName"])
-  mileage_rows = sorted(mileage_rows, key=lambda x: x["_EmployeeName"])
+    summary = (
+        df.groupby(["Employee ID", "Employee", "Pay Type"])
+        .agg({"Hours": "sum", "Amount": "sum", "Rate": "first", "Mileage": "sum"})
+        .reset_index()
+    )
 
-  final_rows = prn_rows + hourly_rows + overtime_rows + mileage_rows
-  final_df = pd.DataFrame(final_rows)
-  if "_EmployeeName" in final_df.columns:
-    final_df = final_df.drop(columns=["_EmployeeName"])
+    prn_rows = []
+    hourly_rows = []
+    overtime_rows = []
+    mileage_rows = []
 
-  return final_df
+    for _, row in summary.iterrows():
+        emp_id = int(row["Employee ID"]) if pd.notnull(row["Employee ID"]) else ""
+        emp_name = row["Employee"]
+        pay_type = row["Pay Type"]
+        total_hours = row["Hours"]
+        total_amount = row["Amount"]
+        rate = row["Rate"]
+        mileage = row["Mileage"]
+
+        labor_override = f"{emp_name} - {emp_id} ({emp_id})" if emp_id else emp_name
+
+        base_row_data = {
+            "Review": "✅ Validated",
+            "Client ID": 16068715,
+            "Worker ID": emp_id,
+            "Org": "",
+            "Job Num": "",
+            "Pay Comp Rate": pay_type,
+            "Rate Num": rate if pay_type == "Hourly" else "",
+            "Hours": total_hours if pay_type == "Hourly" else "",
+            "Units": "",
+            "Line Date": "",
+            "Amount": total_amount if pay_type == "PRN Points" else "",
+            "Check": "",
+            "Override S": "",
+            "Override L": "",
+            "Labor Override": labor_override,
+            "_EmployeeName": emp_name,
+        }
+
+        if pay_type == "PRN Points":
+            prn_rows.append(base_row_data)
+        elif pay_type == "Hourly":
+            if total_hours > 80:
+                reg_row = base_row_data.copy()
+                reg_row["Hours"] = 80.0
+                hourly_rows.append(reg_row)
+
+                ot_hours = total_hours - 80.0
+                ot_row = base_row_data.copy()
+                ot_row["Pay Comp Rate"] = "Overtime"
+                ot_row["Rate Num"] = rate * 1.5 if rate else ""
+                ot_row["Hours"] = ot_hours
+                overtime_rows.append(ot_row)
+            else:
+                hourly_rows.append(base_row_data)
+
+        if mileage > 0:
+            mileage_row = base_row_data.copy()
+            mileage_row["Pay Comp Rate"] = "Mileage"
+            mileage_row["Rate Num"] = 0.73
+            mileage_row["Hours"] = ""
+            mileage_row["Units"] = mileage
+            mileage_row["Amount"] = round(mileage * 0.73, 2)
+            mileage_rows.append(mileage_row)
+
+    prn_rows = sorted(prn_rows, key=lambda x: x["_EmployeeName"])
+    hourly_rows = sorted(hourly_rows, key=lambda x: x["_EmployeeName"])
+    overtime_rows = sorted(overtime_rows, key=lambda x: x["_EmployeeName"])
+    mileage_rows = sorted(mileage_rows, key=lambda x: x["_EmployeeName"])
+
+    final_rows = prn_rows + hourly_rows + overtime_rows + mileage_rows
+    final_df = pd.DataFrame(final_rows)
+    if "_EmployeeName" in final_df.columns:
+        final_df = final_df.drop(columns=["_EmployeeName"])
+
+    return final_df
+
+
+# --- 2. HOME CARE PROCESSOR (New Feature) ---
+def process_home_care_payroll(df):
+    # Clean up column names just in case
+    df.columns = [str(c).strip() for c in df.columns]
+
+    # Ensure required columns exist
+    if "Worker ID" not in df.columns or "Hours" not in df.columns:
+        raise ValueError(
+            "Uploaded file must contain 'Worker ID' and 'Hours' columns."
+        )
+
+    if "Pay Comp Rate" not in df.columns:
+        df["Pay Comp Rate"] = ""
+
+    # Convert Hours to numeric
+    df["Hours"] = pd.to_numeric(df["Hours"], errors="fill_value" if hasattr(pd, "fill_value") else "coerce").fillna(0)
+
+    # Identify rows where Pay Comp Rate is "Hourly" or blank/NaN
+    def is_target_row(val):
+        if pd.isna(val) or str(val).strip() == "" or str(val).strip().lower() == "hourly":
+            return True
+        return False
+
+    # Calculate total hours per Worker ID specifically for Hourly or Blank pay components
+    worker_totals = {}
+    for _, row in df.iterrows():
+        worker_id = row["Worker ID"]
+        comp_rate = row.get("Pay Comp Rate", "")
+        hrs = row["Hours"]
+        if is_target_row(comp_rate) and hrs > 0:
+            worker_totals[worker_id] = worker_totals.get(worker_id, 0.0) + hrs
+
+    processed_rows = []
+    # Track accumulated hours per worker to handle splitting if needed across multiple rows
+    worker_accumulated_hours = {}
+
+    for _, row in df.iterrows():
+        worker_id = row["Worker ID"]
+        comp_rate = row.get("Pay Comp Rate", "")
+        hrs = row["Hours"]
+
+        # If it's a target row (Hourly or blank) and worker total > 80
+        total_w_hours = worker_totals.get(worker_id, 0.0)
+        if is_target_row(comp_rate) and total_w_hours > 80:
+            accumulated = worker_accumulated_hours.get(worker_id, 0.0)
+
+            if accumulated < 80:
+                allowed_regular = 80 - accumulated
+                if hrs <= allowed_regular:
+                    # Entire row is regular
+                    worker_accumulated_hours[worker_id] = accumulated + hrs
+                    processed_rows.append(row.to_dict())
+                else:
+                    # Row needs to be split into Regular and Overtime
+                    reg_part = allowed_regular
+                    ot_part = hrs - allowed_regular
+                    worker_accumulated_hours[worker_id] = 80.0
+
+                    # Regular portion row
+                    reg_row = row.to_dict()
+                    reg_row["Hours"] = reg_part
+                    processed_rows.append(reg_row)
+
+                    # Overtime portion row
+                    ot_row = row.to_dict()
+                    ot_row["Pay Comp Rate"] = "Overtime"
+                    ot_row["Hours"] = ot_part
+                    # Adjust rate or amount for OT if rate num exists
+                    if "Rate Num" in ot_row and pd.notnull(ot_row["Rate Num"]) and ot_row["Rate Num"] != "":
+                        try:
+                            rate_val = float(ot_row["Rate Num"])
+                            ot_row["Rate Num"] = rate_val * 1.5
+                        except:
+                            pass
+                    processed_rows.append(ot_row)
+            else:
+                # Already past 80 hours, this entire row becomes Overtime
+                ot_row = row.to_dict()
+                ot_row["Pay Comp Rate"] = "Overtime"
+                if "Rate Num" in ot_row and pd.notnull(ot_row["Rate Num"]) and ot_row["Rate Num"] != "":
+                    try:
+                        rate_val = float(ot_row["Rate Num"])
+                        ot_row["Rate Num"] = rate_val * 1.5
+                    except:
+                        pass
+                processed_rows.append(ot_row)
+        else:
+            processed_rows.append(row.to_dict())
+
+    return pd.DataFrame(processed_rows)
 
 
 # --- PAGE ROUTING ---
 if current_tab == "Home":
-  st.markdown(
-      '<div class="hero-title">Everything You Need to <span>Start</span>,'
-      " <span>Get Hired</span>, and <span>Thrive</span> as a Payroll"
-      " Professional</div>",
-      unsafe_allow_html=True,
-  )
-  st.markdown(
-      '<div class="hero-subtitle">Transform raw operational exports into'
-      " sleek, verified, Paychex-ready statements instantly. Automatically"
-      " catch new employees, per diem rates, and missing IDs with live review"
-      " flags.</div>",
-      unsafe_allow_html=True,
-  )
-  st.markdown(
-      '<div class="cta-container"><a href="?tab=Upload Data" target="_self"'
-      ' class="cta-button">🚀 Upload Data & Get Started</a></div>',
-      unsafe_allow_html=True,
-  )
+    st.markdown(
+        '<div class="hero-title">Everything You Need to <span>Start</span>,'
+        " <span>Get Hired</span>, and <span>Thrive</span> as a Payroll"
+        " Professional</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="hero-subtitle">Transform raw operational exports into'
+        " sleek, verified, Paychex-ready statements instantly. Automatically"
+        " catch new employees, per diem rates, and missing IDs with live review"
+        " flags.</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="cta-container"><a href="?tab=Upload Data" target="_self"'
+        ' class="cta-button">🚀 Upload Data & Get Started</a></div>',
+        unsafe_allow_html=True,
+    )
 
 elif current_tab == "Upload Data":
-  st.markdown("## 📂 Upload Operational Payroll Export")
-  st.write(
-      "Upload your raw payroll export file (`.xls`, `.xlsx`, or `.csv`) to"
-      " begin validation and Paychex formatting."
-  )
+    st.markdown("## 📂 Select Upload Workflow")
 
-  uploaded_file = st.file_uploader(
-      "Choose a payroll file", type=["xls", "xlsx", "csv"]
-  )
+    # Distinct buttons/radio for Home Health vs Home Care
+    upload_mode = st.radio(
+        "Choose Upload Type",
+        ["Home Health Upload", "Home Care Upload"],
+        horizontal=True
+    )
 
-  if uploaded_file is not None:
-    try:
-      if uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
-      else:
-        xls = pd.ExcelFile(uploaded_file)
-        sheet_name = (
-            "Data Export" if "Data Export" in xls.sheet_names else xls.sheet_names[0]
-        )
-        df = pd.read_excel(xls, sheet_name=sheet_name)
+    st.markdown("---")
 
-      st.session_state.raw_df = df
-      st.success(
-          f"Successfully loaded file: **{uploaded_file.name}** ({len(df)}"
-          " rows)"
-      )
+    if upload_mode == "Home Health Upload":
+        st.markdown("### 🏥 Home Health Payroll Upload")
+        st.write(
+            "Upload your raw operational payroll export file (`.xls`, `.xlsx`, or `.csv`) for Home Health processing.")
+        uploaded_file = st.file_uploader("Choose Home Health file", type=["xls", "xlsx", "csv"], key="hh_file")
 
-      processed = process_payroll_data(df)
-      st.session_state.processed_df = processed
+        if uploaded_file is not None:
+            try:
+                if uploaded_file.name.endswith(".csv"):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    xls = pd.ExcelFile(uploaded_file)
+                    sheet_name = "Data Export" if "Data Export" in xls.sheet_names else xls.sheet_names[0]
+                    df = pd.read_excel(xls, sheet_name=sheet_name)
 
-      st.markdown("### 🔍 Live Review & Validation Preview")
-      st.dataframe(processed, use_container_width=True)
+                st.session_state.raw_df = df
+                st.success(f"Successfully loaded Home Health file: **{uploaded_file.name}** ({len(df)} rows)")
 
-    except Exception as e:
-      st.error(f"Error processing file: {e}")
-  else:
-    st.info("Awaiting file upload...")
+                processed = process_home_health_payroll(df)
+                st.session_state.processed_df = processed
+
+                st.markdown("### 🔍 Live Review & Validation Preview")
+                st.dataframe(processed, use_container_width=True)
+
+            except Exception as e:
+                st.error(f"Error processing Home Health file: {e}")
+        else:
+            st.info("Awaiting Home Health file upload...")
+
+    else:  # Home Care Upload
+        st.markdown("### 🏡 Home Care Payroll Upload")
+        st.write(
+            "Upload your pre-formatted Paychex import-ready file for Home Care processing (Automatic Overtime evaluation for Hourly and blank Pay Components > 80 hrs).")
+        uploaded_file = st.file_uploader("Choose Home Care file", type=["xls", "xlsx", "csv"], key="hc_file")
+
+        if uploaded_file is not None:
+            try:
+                if uploaded_file.name.endswith(".csv"):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    xls = pd.ExcelFile(uploaded_file)
+                    sheet_name = xls.sheet_names[0]
+                    df = pd.read_excel(xls, sheet_name=sheet_name)
+
+                st.session_state.raw_df = df
+                st.success(f"Successfully loaded Home Care file: **{uploaded_file.name}** ({len(df)} rows)")
+
+                processed = process_home_care_payroll(df)
+                st.session_state.processed_df = processed
+
+                st.markdown("### 🔍 Live Review & Validation Preview (Home Care)")
+                st.dataframe(processed, use_container_width=True)
+
+            except Exception as e:
+                st.error(f"Error processing Home Care file: {e}")
+        else:
+            st.info("Awaiting Home Care file upload...")
 
 elif current_tab == "Export Center":
-  st.markdown("## 📥 Export Center")
-  st.write(
-      "Download your validated, formatted payroll ready for direct import into"
-      " Paychex."
-  )
-
-  if st.session_state.processed_df is not None:
-    df_export = st.session_state.processed_df
-    st.dataframe(df_export, use_container_width=True)
-
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-      df_export.to_excel(writer, sheet_name="Paychex Import", index=False)
-    buffer.seek(0)
-
-    st.download_button(
-        label="📥 Download Paychex-Ready Excel File",
-        data=buffer,
-        file_name="Paychex_Import_Ready.xlsx",
-        mime=(
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        ),
-        type="primary",
+    st.markdown("## 📥 Export Center")
+    st.write(
+        "Download your validated, formatted payroll ready for direct import into"
+        " Paychex."
     )
-  else:
-    st.warning("No processed data available. Please upload a file first.")
+
+    if st.session_state.processed_df is not None:
+        df_export = st.session_state.processed_df
+        st.dataframe(df_export, use_container_width=True)
+
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            df_export.to_excel(writer, sheet_name="Paychex Import", index=False)
+        buffer.seek(0)
+
+        st.download_button(
+            label="📥 Download Paychex-Ready Excel File",
+            data=buffer,
+            file_name="Paychex_Import_Ready.xlsx",
+            mime=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+            type="primary",
+        )
+    else:
+        st.warning("No processed data available. Please upload a file first.")
 
 elif current_tab == "Developer Support":
-  st.markdown("## ⚙️ Developer Support & Documentation")
-  st.markdown("""
+    st.markdown("## ⚙️ Developer Support & Documentation")
+    st.markdown("""
     ### 📌 Core Business Rules & Mappings:
-    1. **Strict Ordering & Grouping**: 
-       - **1st**: PRN Points employees sorted alphabetically.
-       - **2nd**: Hourly employees sorted alphabetically (capped at 80 hours).
-       - **3rd**: Overtime entries for hourly employees exceeding 80 hours.
-       - **4th**: Mileage entries grouped at the bottom, sorted alphabetically.
-    2. **Mileage Rate**: Set to **0.73** per unit.
-    3. **Overtime Rule**: Hours exceeding 80 for hourly employees automatically generate an **Overtime** component row.
+    1. **Home Health Rules**: 
+       - PRN Points employees sorted alphabetically.
+       - Hourly employees sorted alphabetically (capped at 80 hours).
+       - Overtime entries for hourly exceeding 80 hours.
+       - Mileage entries at the bottom at **0.73** rate.
+    2. **Home Care Rules**:
+       - Evaluates pre-formatted Paychex ready files.
+       - Aggregates hours across **Hourly** and **blank** Pay Components per Worker ID.
+       - Automatically splits or tags hours exceeding 80 as **Overtime**.
     """)
