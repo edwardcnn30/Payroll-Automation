@@ -839,6 +839,8 @@ elif current_tab == "Multi-LOB Batch":
             # 1. Process Hospice First
             if batch_hospice_files:
                 hospice_processed = process_hospice_reconciliation(batch_hh_file, batch_hospice_files)
+                if not hospice_processed.empty:
+                    hospice_processed["LOB"] = "Hospice"
 
             # Extract worker IDs processed under Hospice to prevent duplication in Home Health
             hospice_worker_ids = set()
@@ -863,6 +865,9 @@ elif current_tab == "Multi-LOB Batch":
                 else:
                     hh_processed = hh_temp_processed
 
+                if not hh_processed.empty:
+                    hh_processed["LOB"] = "Home Health"
+
             # 3. Process Home Care
             if batch_hc_file is not None:
                 if batch_hc_file.name.endswith(".csv"):
@@ -871,6 +876,8 @@ elif current_tab == "Multi-LOB Batch":
                     xls = pd.ExcelFile(batch_hc_file)
                     hc_raw = pd.read_excel(xls, sheet_name=xls.sheet_names[0])
                 hc_processed = process_home_care_payroll(hc_raw)
+                if not hc_processed.empty:
+                    hc_processed["LOB"] = "Home Care"
 
             # Combine all outputs
             combined_dfs = [df for df in [hh_processed, hc_processed, hospice_processed] if not df.empty]
@@ -886,25 +893,29 @@ elif current_tab == "Multi-LOB Batch":
                 st.dataframe(final_batch_df, use_container_width=True)
 
                 st.markdown("---")
-                st.markdown("### 📊 Total Amounts & Earnings Summary (Overall Three LOBs)")
+                st.markdown("### 📊 Summary by Line of Business (LOB)")
 
                 summary_calc = final_batch_df.copy()
-                summary_calc["Amount"] = pd.to_numeric(summary_calc["Amount"], errors="coerce").fillna(0)
                 summary_calc["Hours"] = pd.to_numeric(summary_calc["Hours"], errors="coerce").fillna(0)
                 summary_calc["Units"] = pd.to_numeric(summary_calc["Units"], errors="coerce").fillna(0)
+                summary_calc["Rate"] = pd.to_numeric(summary_calc["Rate"], errors="coerce").fillna(0)
+                summary_calc["Explicit_Amount"] = pd.to_numeric(summary_calc["Amount"], errors="coerce").fillna(0)
 
-                total_summary = (
-                    summary_calc.groupby("Worker ID")
+                # Calculate total monetary amount (Explicit Amount + Hours * Rate for hourly components)
+                summary_calc["Total_Amount_Calc"] = summary_calc["Explicit_Amount"] + (
+                            summary_calc["Hours"] * summary_calc["Rate"])
+
+                lob_summary = (
+                    summary_calc.groupby("LOB")
                     .agg(
-                        Employee_Name=("Labor Override", "first"),
                         Total_Hours=("Hours", "sum"),
                         Total_Mileage_Units=("Units", "sum"),
-                        Total_Explicit_Amount=("Amount", "sum")
+                        Total_Amount=("Total_Amount_Calc", "sum")
                     )
                     .reset_index()
                 )
 
-                st.dataframe(total_summary, use_container_width=True)
+                st.dataframe(lob_summary, use_container_width=True)
 
                 col_m1, col_m2, col_m3 = st.columns(3)
                 with col_m1:
@@ -921,5 +932,27 @@ elif current_tab == "Multi-LOB Batch":
     elif st.session_state.batch_processed_df is not None:
         st.markdown("### 🔍 Previously Processed Enterprise Batch Output")
         st.dataframe(st.session_state.batch_processed_df, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown("### 📊 Summary by Line of Business (LOB)")
+        summary_calc = st.session_state.batch_processed_df.copy()
+        if "LOB" in summary_calc.columns:
+            summary_calc["Hours"] = pd.to_numeric(summary_calc["Hours"], errors="coerce").fillna(0)
+            summary_calc["Units"] = pd.to_numeric(summary_calc["Units"], errors="coerce").fillna(0)
+            summary_calc["Rate"] = pd.to_numeric(summary_calc["Rate"], errors="coerce").fillna(0)
+            summary_calc["Explicit_Amount"] = pd.to_numeric(summary_calc["Amount"], errors="coerce").fillna(0)
+            summary_calc["Total_Amount_Calc"] = summary_calc["Explicit_Amount"] + (
+                        summary_calc["Hours"] * summary_calc["Rate"])
+
+            lob_summary = (
+                summary_calc.groupby("LOB")
+                .agg(
+                    Total_Hours=("Hours", "sum"),
+                    Total_Mileage_Units=("Units", "sum"),
+                    Total_Amount=("Total_Amount_Calc", "sum")
+                )
+                .reset_index()
+            )
+            st.dataframe(lob_summary, use_container_width=True)
     else:
         st.info("Upload your departmental files above and click the enterprise batch button to begin.")
