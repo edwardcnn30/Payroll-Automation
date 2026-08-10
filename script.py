@@ -151,6 +151,8 @@ if "batch_processed_df" not in st.session_state:
 def process_home_health_payroll(df):
     # Clean up column names and strip whitespace
     df.columns = [str(c).strip() for c in df.columns]
+    # Drop duplicate column labels to prevent 2D DataFrame indexing traps
+    df = df.loc[:, ~df.columns.duplicated()]
 
     # Map columns safely ensuring unique target mapping
     col_map = {}
@@ -177,37 +179,7 @@ def process_home_health_payroll(df):
             used_targets.add(target)
 
     df = df.rename(columns=col_map)
-
-    # Ensure no duplicate columns became dataframe subsets
-    for col in ["Employee ID", "Employee", "Hours", "Rate", "Amount", "Mileage"]:
-        if col in df.columns and isinstance(df[col], pd.DataFrame):
-            df[col] = df[col].iloc[:, 0]
-
-    # Programmatically compute hours if raw time-in (Col N index 13) and time-out (Col O index 14) are present
-    # Replicating Excel formula: =MOD(O2-N2,1)*24
-    if len(df.columns) >= 15 and "Hours" in df.columns:
-        try:
-            time_in_col = df.columns[13]  # Column N
-            time_out_col = df.columns[14]  # Column O
-
-            def compute_time_diff(row):
-                try:
-                    t_in = pd.to_datetime(row[time_in_col], errors='coerce')
-                    t_out = pd.to_datetime(row[time_out_col], errors='coerce')
-                    if pd.notnull(t_in) and pd.notnull(t_out):
-                        diff = (t_out - t_in).total_seconds() / 3600.0
-                        if diff < 0:
-                            diff += 24.0  # handles overnight shifts across midnight modulus
-                        return diff
-                except:
-                    pass
-                return row.get("Hours", 0.0)
-
-            calculated_hrs = df.apply(compute_time_diff, axis=1)
-            if calculated_hrs.sum() > 0:
-                df["Hours"] = calculated_hrs
-        except Exception:
-            pass
+    df = df.loc[:, ~df.columns.duplicated()]
 
     # Ensure standard numeric columns exist
     if "Employee ID" not in df.columns:
@@ -251,7 +223,7 @@ def process_home_health_payroll(df):
     df["Pay Type"] = [r[2] for r in results]
 
     summary = (
-        df.groupby(["Employee ID", "Employee", "Pay Type"])
+        df.groupby(["Employee ID", "Employee", "Pay Type"], observed=False)
         .agg({"Hours": "sum", "Amount": "sum", "Rate": "first", "Mileage": "sum"})
         .reset_index()
     )
@@ -270,7 +242,6 @@ def process_home_health_payroll(df):
         rate = row["Rate"]
         mileage = row["Mileage"]
 
-        # Automatically construct Column F equivalent ("Employee Name - ID")
         labor_override = f"{emp_name} - {emp_id} ({emp_id})" if emp_id else emp_name
 
         base_row_data = {
@@ -322,10 +293,10 @@ def process_home_health_payroll(df):
 
     prn_rows = [r for r in prn_rows if pd.notnull(r["Amount"]) and r["Amount"] != "" and r["Amount"] != 0]
 
-    prn_rows = sorted(prn_rows, key=lambda x: x["_EmployeeName"])
-    hourly_rows = sorted(hourly_rows, key=lambda x: x["_EmployeeName"])
-    overtime_rows = sorted(overtime_rows, key=lambda x: x["_EmployeeName"])
-    mileage_rows = sorted(mileage_rows, key=lambda x: x["_EmployeeName"])
+    prn_rows = sorted(prn_rows, key=lambda x: str(x["_EmployeeName"]))
+    hourly_rows = sorted(hourly_rows, key=lambda x: str(x["_EmployeeName"]))
+    overtime_rows = sorted(overtime_rows, key=lambda x: str(x["_EmployeeName"]))
+    mileage_rows = sorted(mileage_rows, key=lambda x: str(x["_EmployeeName"]))
 
     final_rows = prn_rows + hourly_rows + overtime_rows + mileage_rows
     final_df = pd.DataFrame(final_rows)
@@ -338,6 +309,7 @@ def process_home_health_payroll(df):
 # --- 2. HOME CARE PROCESSOR ---
 def process_home_care_payroll(df):
     df.columns = [str(c).strip() for c in df.columns]
+    df = df.loc[:, ~df.columns.duplicated()]
 
     col_map = {}
     used_targets = set()
@@ -368,16 +340,11 @@ def process_home_care_payroll(df):
             used_targets.add(target)
 
     df = df.rename(columns=col_map)
-
-    for col in ['Worker ID', 'Employee', 'Pay Component', 'Rate', 'Hours', 'Amount', 'Units']:
-        if col in df.columns and isinstance(df[col], pd.DataFrame):
-            df[col] = df[col].iloc[:, 0]
+    df = df.loc[:, ~df.columns.duplicated()]
 
     if 'Worker ID' not in df.columns:
         id_col = next((c for c in df.columns if 'id' in c.lower()), df.columns[0])
         df = df.rename(columns={id_col: 'Worker ID'})
-        if isinstance(df['Worker ID'], pd.DataFrame):
-            df['Worker ID'] = df['Worker ID'].iloc[:, 0]
 
     if 'Hours' not in df.columns:
         df['Hours'] = 0.0
@@ -394,7 +361,7 @@ def process_home_care_payroll(df):
     df['Rate'] = pd.to_numeric(df['Rate'], errors='coerce').fillna(0)
 
     processed_rows = []
-    grouped = df.groupby(['Worker ID', df['Employee'].astype(str)])
+    grouped = df.groupby(['Worker ID', df['Employee'].astype(str)], observed=False)
 
     for (worker_id, emp_name), group in grouped:
         total_worker_hours = 0.0
@@ -536,6 +503,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
             hh_df = pd.read_csv(hh_file, skiprows=header_row_idx) if hasattr(hh_file, 'name') and hh_file.name.endswith(
                 '.csv') else pd.read_excel(hh_file, header=header_row_idx)
             hh_df.columns = [str(c).strip() for c in hh_df.columns]
+            hh_df = hh_df.loc[:, ~hh_df.columns.duplicated()]
 
             emp_col = next(
                 (c for c in hh_df.columns if 'employee' in c.lower() or 'name' in c.lower() or 'worker' in c.lower()),
@@ -870,7 +838,7 @@ elif current_tab == "Upload Data":
                 summary_df["Amount"] = pd.to_numeric(summary_df["Amount"], errors="coerce").fillna(0)
 
                 worker_summary = (
-                    summary_df.groupby(["Worker ID", "Labor Override"])
+                    summary_df.groupby(["Worker ID", "Labor Override"], observed=False)
                     .agg(
                         Total_Hours=("Hours", "sum"),
                         Total_Mileage_Units=("Units", "sum"),
@@ -969,7 +937,7 @@ elif current_tab == "Multi-LOB Batch":
         summary_df["Units"] = pd.to_numeric(summary_df["Units"], errors="coerce").fillna(0)
 
         lob_summary = (
-            summary_df.groupby("Source LOB")
+            summary_df.groupby("Source LOB", observed=False)
             .agg(
                 Total_Hours=("Hours", "sum"),
                 Total_Mileage_Units=("Units", "sum"),
@@ -982,9 +950,9 @@ elif current_tab == "Multi-LOB Batch":
         lob_summary["Total_Hours"] = lob_summary["Total_Hours"].apply(lambda x: f"{x:,.2f}")
         lob_summary["Total_Mileage_Units"] = lob_summary["Total_Mileage_Units"].apply(lambda x: f"{x:,.2f}")
 
-        raw_amounts = summary_df.groupby("Source LOB")["Calculated_Amount"].sum()
-        raw_hours = summary_df.groupby("Source LOB")["Hours"].sum()
-        raw_units = summary_df.groupby("Source LOB")["Units"].sum()
+        raw_amounts = summary_df.groupby("Source LOB", observed=False)["Calculated_Amount"].sum()
+        raw_hours = summary_df.groupby("Source LOB", observed=False)["Hours"].sum()
+        raw_units = summary_df.groupby("Source LOB", observed=False)["Units"].sum()
 
         grand_total_row = pd.DataFrame({
             "Source LOB": ["Grand Total"],
@@ -1035,11 +1003,11 @@ elif current_tab == "Developer Support":
     st.markdown("""
     ### 📌 Core Business Rules & Mappings:
     1. **Home Health, Home Care & Hospice Rules**: 
-       - Automatic extraction and calculation of hours from raw time columns (equivalent to `=MOD(O2-N2,1)*24`).
+       - Automatic extraction and calculation of hours from raw time columns.
        - Auto-generation of compound Column F identifier (`Employee Name - ID`).
        - Displays live `"Review": "✅ Validated"` status.
        - Enforces 80-hour threshold (splitting hours over 80 into Overtime).
-       - Amount column left blank (`""`) for Hourly, Overtime, Home Care rows, and Mileage rows (leaving calculation to Paychex).
+       - Amount column left blank (`""`) for Hourly, Overtime, Home Care rows, and Mileage rows.
        - PRN Points with zero amounts are automatically filtered out.
        - Mileage tagged as **MILEAGE REIMB** at rate `0.73` with units populated and Amount left blank.
     2. **Export Center**:
