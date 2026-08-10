@@ -865,12 +865,32 @@ elif current_tab == "Multi-LOB Batch":
             st.session_state.processed_df = master_batch_df
             st.session_state.batch_processed_df = master_batch_df
             st.success("✅ Multi-LOB Batch processed successfully!")
-            st.dataframe(master_batch_df, use_container_width=True)
         else:
             st.warning("Please upload at least one file.")
 
-    if st.session_state.batch_processed_df is not None and not batch_hospice_files and not batch_hc_file and not batch_hh_file:
+    if st.session_state.batch_processed_df is not None:
+        st.markdown("### 🔍 Combined Multi-LOB Preview")
         st.dataframe(st.session_state.batch_processed_df, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown("### 📊 Multi-LOB Master Earnings & Totals Summary")
+        st.write("Summary of Total Hours, Mileage Units, and Amounts across all three lines of business:")
+
+        summary_df = st.session_state.batch_processed_df.copy()
+        summary_df["Hours"] = pd.to_numeric(summary_df["Hours"], errors="coerce").fillna(0)
+        summary_df["Units"] = pd.to_numeric(summary_df["Units"], errors="coerce").fillna(0)
+        summary_df["Amount"] = pd.to_numeric(summary_df["Amount"], errors="coerce").fillna(0)
+
+        master_summary = (
+            summary_df.groupby(["Source LOB", "Worker ID", "Labor Override"])
+            .agg(
+                Total_Hours=("Hours", "sum"),
+                Total_Mileage_Units=("Units", "sum"),
+                Total_Amount=("Amount", "sum"),
+            )
+            .reset_index()
+        )
+        st.dataframe(master_summary, use_container_width=True)
 
 elif current_tab == "Export Center":
     st.markdown("## 📥 Export Center")
