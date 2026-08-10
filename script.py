@@ -7,12 +7,12 @@ st.set_page_config(
     page_title="Payroll Studio", page_icon="💼", layout="wide"
 )
 
-# Initialize Query Params for Navigation matching screenshot style
+# Initialize Query Params for Navigation
 if "tab" not in st.query_params:
   st.query_params["tab"] = "Home"
 current_tab = st.query_params["tab"]
 
-# Custom Styling for Dark Theme & Sleek Header matching screenshot
+# Custom Styling for Dark Theme & Original UI Match
 st.markdown(
     """
     <style>
@@ -86,13 +86,29 @@ st.markdown(
         color: #a0aec0;
         text-align: center;
         margin-bottom: 2rem;
+        max-width: 900px;
+        margin-left: auto;
+        margin-right: auto;
     }
-    .metric-card {
-        background-color: #1a202c;
-        padding: 1.5rem;
-        border-radius: 0.5rem;
-        border: 1px solid #2d3748;
+    .cta-container {
         text-align: center;
+        margin-top: 2.5rem;
+    }
+    .cta-button {
+        background: linear-gradient(135deg, #ff7b00 0%, #ff5500 100%);
+        color: #ffffff !important;
+        padding: 0.85rem 2.5rem;
+        border-radius: 0.5rem;
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 1.1rem;
+        box-shadow: 0 4px 14px rgba(255, 102, 0, 0.4);
+        transition: all 0.2s ease-in-out;
+        display: inline-block;
+    }
+    .cta-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(255, 102, 0, 0.6);
     }
     </style>
 """,
@@ -121,7 +137,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Initialize Session State for Data Persistence
+# Initialize Session State
 if "processed_df" not in st.session_state:
   st.session_state.processed_df = None
 if "raw_df" not in st.session_state:
@@ -257,23 +273,11 @@ if current_tab == "Home":
       " flags.</div>",
       unsafe_allow_html=True,
   )
-
-  col1, col2, col3 = st.columns(3)
-  with col1:
-    st.markdown(
-        """<div class="metric-card"><h3>⚡ Instant Transform</h3><p>Upload raw CSV/Excel files and convert them instantly to Paychex format.</p></div>""",
-        unsafe_allow_html=True,
-    )
-  with col2:
-    st.markdown(
-        """<div class="metric-card"><h3>🔍 Live Review Flags</h3><p>Automatically catch missing IDs, rate exceptions, and validations.</p></div>""",
-        unsafe_allow_html=True,
-    )
-  with col3:
-    st.markdown(
-        """<div class="metric-card"><h3>📊 Clean Exports</h3><p>Generate exact template structures ready for direct client import.</p></div>""",
-        unsafe_allow_html=True,
-    )
+  st.markdown(
+      '<div class="cta-container"><a href="?tab=Upload Data" target="_self"'
+      ' class="cta-button">🚀 Upload Data & Get Started</a></div>',
+      unsafe_allow_html=True,
+  )
 
 elif current_tab == "Upload Data":
   st.markdown("## 📂 Upload Operational Payroll Export")
