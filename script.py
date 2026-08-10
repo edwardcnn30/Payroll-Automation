@@ -272,17 +272,22 @@ def process_home_care_payroll(df):
     if "Pay Component" not in df.columns:
         df["Pay Component"] = ""
 
-    # Normalize existing mileage components
-    df.loc[
-        df["Pay Component"].str.lower().isin(["mileage", "miles", "mileage reimbursement"]),
-        "Pay Component",
-    ] = "MILEAGE REIMBURSEMENT"
+    # Normalize existing mileage components or 0.73 rates
+    for index, row in df.iterrows():
+        comp = str(row.get("Pay Component", "")).strip().lower()
+        rate = pd.to_numeric(row.get("Rate"), errors="coerce")
+        if comp in ["mileage", "miles", "mileage reimbursement"] or (not pd.isna(rate) and rate == 0.73):
+            df.at[index, "Pay Component"] = "MILEAGE REIMBURSEMENT"
+            df.at[index, "Units"] = row["Hours"]
+            df.at[index, "Hours"] = ""
+            df.at[index, "Rate"] = 0.73
+            df.at[index, "Amount"] = round(float(row["Hours"]) * 0.73, 2)
 
     df["Hours"] = pd.to_numeric(df["Hours"], errors="coerce").fillna(0)
 
     for index, row in df.iterrows():
         comp = row.get("Pay Component")
-        if pd.isna(comp) or str(comp).strip() == "":
+        if comp != "MILEAGE REIMBURSEMENT" and (pd.isna(comp) or str(comp).strip() == ""):
             df.at[index, "Pay Component"] = "Overtime"
 
     hourly_totals = (
@@ -330,8 +335,11 @@ def process_home_care_payroll(df):
 def process_hospice_reconciliation(hh_df, timesheet_files):
     hh_df.columns = [str(c).strip() for c in hh_df.columns]
 
-    emp_col = next((c for c in hh_df.columns if 'employee' in c.lower() or 'name' in c.lower()), 'Employee')
-    id_col = next((c for c in hh_df.columns if 'id' in c.lower()), 'Employee ID')
+    emp_col = next(
+        (c for c in hh_df.columns if 'employee' in c.lower() or 'name' in c.lower() or 'worker' in c.lower()),
+        hh_df.columns[0])
+    id_col = next((c for c in hh_df.columns if 'id' in c.lower() or 'emp' in c.lower()),
+                  hh_df.columns[1] if len(hh_df.columns) > 1 else hh_df.columns[0])
 
     id_mapping = {}
     for _, row in hh_df.iterrows():
@@ -348,20 +356,20 @@ def process_hospice_reconciliation(hh_df, timesheet_files):
             df_ts = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None)
 
             file_base = ts_file.name.split(".")[0]
-            clean_name = file_base.replace("_", " ").strip()
+            file_lower = file_base.lower()
 
             worker_id = ""
             matched_key = ""
             for k, v in id_mapping.items():
-                parts = k.split()
-                if any(p in file_base.lower() for p in parts if len(p) > 2):
+                if k in file_lower or file_lower in k:
                     worker_id = v
                     matched_key = k
                     break
 
             if not worker_id:
                 for k, v in id_mapping.items():
-                    if k in file_base.lower() or file_base.lower() in k:
+                    tokens = [t for t in k.split() if len(t) > 1]
+                    if any(t in file_lower for t in tokens):
                         worker_id = v
                         matched_key = k
                         break
@@ -391,6 +399,8 @@ def process_hospice_reconciliation(hh_df, timesheet_files):
                             pass
 
             rate_hours_list = []
+            mileage_units_list = []
+
             if hours_row_idx != -1 and rate_row_idx != -1:
                 for c_idx in range(len(df_ts.columns)):
                     hrs_cell = df_ts.iloc[hours_row_idx, c_idx]
@@ -400,25 +410,29 @@ def process_hospice_reconciliation(hh_df, timesheet_files):
                         hrs_val = float(hrs_cell)
                         rate_val = float(str(rate_cell).replace("$", "").strip())
                         if hrs_val > 0 and rate_val > 0:
-                            rate_hours_list.append((rate_val, hrs_val))
+                            if rate_val == 0.73:
+                                mileage_units_list.append(hrs_val)
+                            else:
+                                rate_hours_list.append((rate_val, hrs_val))
                     except:
                         pass
 
-            if not rate_hours_list:
+            if not rate_hours_list and not mileage_units_list:
                 rate_hours_list = [(50.0, 40.0)]
 
             total_worker_hours = sum([h for _, h in rate_hours_list])
             accumulated_hours = 0.0
 
             display_name = matched_key.title() if matched_key else file_base
-            labor_override = f"{display_name} - {worker_id} ({worker_id})" if worker_id else display_name
+            formatted_worker_id = int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace('.', '',
+                                                                                                     1).isdigit() else worker_id
+            labor_override = f"{display_name} - {formatted_worker_id} ({formatted_worker_id})" if formatted_worker_id else display_name
 
             for rate, hours in rate_hours_list:
                 base_item = {
                     "Review": "✅ Validated",
                     "Client ID": 16068715,
-                    "Worker ID": int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace('.', '',
-                                                                                                    1).isdigit() else worker_id,
+                    "Worker ID": formatted_worker_id,
                     "Org": "",
                     "Job Num": "",
                     "Pay Component": "Hourly",
@@ -456,20 +470,20 @@ def process_hospice_reconciliation(hh_df, timesheet_files):
                 else:
                     all_reconciled_rows.append(base_item)
 
-            if miles_val > 0:
+            total_miles = miles_val + sum(mileage_units_list)
+            if total_miles > 0:
                 all_reconciled_rows.append({
                     "Review": "✅ Validated",
                     "Client ID": 16068715,
-                    "Worker ID": int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace('.', '',
-                                                                                                    1).isdigit() else worker_id,
+                    "Worker ID": formatted_worker_id,
                     "Org": "",
                     "Job Num": "",
                     "Pay Component": "MILEAGE REIMBURSEMENT",
                     "Rate": 0.73,
                     "Hours": "",
-                    "Units": miles_val,
+                    "Units": total_miles,
                     "Line Date": "",
-                    "Amount": round(miles_val * 0.73, 2),
+                    "Amount": round(total_miles * 0.73, 2),
                     "Check": "",
                     "Override State": "",
                     "Override Local": "",
