@@ -235,7 +235,7 @@ def process_home_health_payroll(df):
 
         if mileage > 0:
             mileage_row = base_row_data.copy()
-            mileage_row["Pay Component"] = "Mileage"
+            mileage_row["Pay Component"] = "MILEAGE REIMBURSEMENT"
             mileage_row["Rate"] = 0.73
             mileage_row["Hours"] = ""
             mileage_row["Units"] = mileage
@@ -271,6 +271,12 @@ def process_home_care_payroll(df):
 
     if "Pay Component" not in df.columns:
         df["Pay Component"] = ""
+
+    # Normalize existing mileage components
+    df.loc[
+        df["Pay Component"].str.lower().isin(["mileage", "miles", "mileage reimbursement"]),
+        "Pay Component",
+    ] = "MILEAGE REIMBURSEMENT"
 
     df["Hours"] = pd.to_numeric(df["Hours"], errors="coerce").fillna(0)
 
@@ -368,9 +374,9 @@ def process_hospice_reconciliation(hh_df, timesheet_files):
                 row_vals = [str(df_ts.iloc[r_idx, c]).strip().lower() for c in range(len(df_ts.columns))]
                 row_str = " ".join(row_vals)
 
-                if "total hrs" in row_str:
+                if "total hrs" in row_str or "total hours" in row_str:
                     hours_row_idx = r_idx
-                if "hourly rate" in row_str:
+                if "hourly rate" in row_str or "rate" in row_str:
                     rate_row_idx = r_idx
 
                 if "miles" in row_str or "mileage" in row_str:
@@ -458,7 +464,7 @@ def process_hospice_reconciliation(hh_df, timesheet_files):
                                                                                                     1).isdigit() else worker_id,
                     "Org": "",
                     "Job Num": "",
-                    "Pay Component": "Mileage",
+                    "Pay Component": "MILEAGE REIMBURSEMENT",
                     "Rate": 0.73,
                     "Hours": "",
                     "Units": miles_val,
@@ -667,13 +673,14 @@ elif current_tab == "Developer Support":
        - PRN Points employees sorted alphabetically.
        - Hourly employees sorted alphabetically (capped at 80 hours).
        - Overtime entries for hourly exceeding 80 hours (retaining original rate).
-       - Mileage entries at the bottom at **0.73** rate.
+       - Mileage entries tagged as **MILEAGE REIMBURSEMENT** at **0.73** rate.
     2. **Home Care Rules**:
        - Evaluates pre-formatted Paychex ready files.
        - Blank Pay Components are automatically tagged as **Overtime** while preserving original rates.
        - Hourly rows are aggregated per Worker ID and any total hours over 80 are split into **Overtime**.
+       - Mileage entries normalized to **MILEAGE REIMBURSEMENT**.
     3. **Hospice Reconciliation Rules**:
        - Matches hospice timesheets against Home Health master data to fetch Worker IDs.
        - Enforces the 80-hour threshold across multiple rates per employee, retaining original rates for overtime.
-       - Replaces home health mileage with official timesheet mileage (`Units * 0.73`).
+       - Replaces home health mileage with official timesheet mileage tagged as **MILEAGE REIMBURSEMENT** (`Units * 0.73`).
     """)
