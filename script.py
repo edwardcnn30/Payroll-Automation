@@ -45,7 +45,7 @@ st.markdown(
     }
     .nav-links {
         display: flex;
-        gap: 2rem;
+        gap: 1.5rem;
         align-items: center;
     }
     .nav-links a {
@@ -64,7 +64,7 @@ st.markdown(
         color: #a0aec0;
         text-decoration: none;
         font-size: 1.1rem;
-        margin-left: 1rem;
+        margin-left: 0.5rem;
     }
     .github-icon:hover {
         color: #ffffff;
@@ -114,9 +114,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Render Sleek Header Bar
+# Render Sleek Header Bar with New Navigation Item
 active_home = "active" if current_tab == "Home" else ""
 active_upload = "active" if current_tab == "Upload Data" else ""
+active_batch = "active" if current_tab == "Multi-LOB Batch" else ""
 active_export = "active" if current_tab == "Export Center" else ""
 active_dev = "active" if current_tab == "Developer Support" else ""
 
@@ -127,6 +128,7 @@ st.markdown(
         <div class="nav-links">
             <a href="?tab=Home" class="{active_home}">Home</a>
             <a href="?tab=Upload Data" class="{active_upload}">Upload Data</a>
+            <a href="?tab=Multi-LOB Batch" class="{active_batch}">⚡ Multi-LOB Batch</a>
             <a href="?tab=Export Center" class="{active_export}">Export Center</a>
             <a href="?tab=Developer Support" class="{active_dev}">Developer Support</a>
             <a href="https://github.com" target="_blank" class="github-icon">🐙</a>
@@ -141,6 +143,8 @@ if "processed_df" not in st.session_state:
     st.session_state.processed_df = None
 if "raw_df" not in st.session_state:
     st.session_state.raw_df = None
+if "batch_processed_df" not in st.session_state:
+    st.session_state.batch_processed_df = None
 
 
 # --- 1. HOME HEALTH PROCESSOR ---
@@ -209,7 +213,7 @@ def process_home_health_payroll(df):
             "Hours": total_hours if pay_type == "Hourly" else "",
             "Units": "",
             "Line Date": "",
-            "Amount": total_amount if pay_type == "PRN Points" else total_amount,
+            "Amount": total_amount,
             "Check": "",
             "Override State": "",
             "Override Local": "",
@@ -293,7 +297,6 @@ def process_home_care_payroll(df):
         if comp != "MILEAGE REIMBURSEMENT" and (pd.isna(comp) or str(comp).strip() == ""):
             df.at[index, "Pay Component"] = "Overtime"
 
-        # Calculate amount if missing
         if pd.isna(row.get("Amount")) or row.get("Amount") == "":
             hrs = row.get("Hours", 0)
             rt = row.get("Rate", 0)
@@ -549,7 +552,7 @@ if current_tab == "Home":
     )
 
 elif current_tab == "Upload Data":
-    st.markdown("## 📂 Select Upload Workflow")
+    st.markdown("## 📂 Select Upload Workflow (Original Individual Tabs)")
 
     upload_mode = st.radio(
         "Choose Upload Type",
@@ -668,21 +671,14 @@ elif current_tab == "Upload Data":
                 st.markdown("### 🔍 Comparison & Reconciled Output Preview")
                 st.dataframe(processed, use_container_width=True)
 
-                # --- NEW SCREEN / SECTION: TOTAL AMOUNTS & EARNINGS BREAKDOWN ---
                 st.markdown("---")
                 st.markdown("### 💰 Employee Total Earnings & Earnings Breakdown")
-                st.write(
-                    "Aggregated totals showing computed line amounts (`Rate * Hours` or `Units * Rate`), total earnings per Worker ID, and individual employee breakdowns (page break view)."
-                )
-
-                # Prepare summary dataframe for aggregation
                 summary_df = processed.copy()
                 summary_df["Rate"] = pd.to_numeric(summary_df["Rate"], errors="coerce").fillna(0)
                 summary_df["Hours"] = pd.to_numeric(summary_df["Hours"], errors="coerce").fillna(0)
                 summary_df["Units"] = pd.to_numeric(summary_df["Units"], errors="coerce").fillna(0)
                 summary_df["Amount"] = pd.to_numeric(summary_df["Amount"], errors="coerce").fillna(0)
 
-                # Group by Worker ID & Labor Override
                 worker_summary = (
                     summary_df.groupby(["Worker ID", "Labor Override"])
                     .agg(
@@ -718,11 +714,105 @@ elif current_tab == "Upload Data":
         else:
             st.info("Please upload at least one Hospice timesheet to begin.")
 
+elif current_tab == "Multi-LOB Batch":
+    st.markdown("## ⚡ Enterprise Multi-LOB Batch Processing Pipeline")
+    st.write(
+        "Upload data for all three lines of business (**Home Health**, **Home Care**, and **Hospice**) simultaneously. "
+        "The engine will run each file through its respective authoritative policy rule and combine everything into a single master Paychex import package."
+    )
+    st.markdown("---")
+
+    col_b1, col_b2, col_b3 = st.columns(3)
+
+    with col_b1:
+        st.markdown("### 🏥 Home Health File")
+        batch_hh_file = st.file_uploader("Upload Home Health Data", type=["xls", "xlsx", "csv"], key="batch_hh")
+
+    with col_b2:
+        st.markdown("### 🏡 Home Care File")
+        batch_hc_file = st.file_uploader("Upload Home Care Data", type=["xls", "xlsx", "csv"], key="batch_hc")
+
+    with col_b3:
+        st.markdown("### 🕊️ Hospice Timesheets")
+        batch_hospice_files = st.file_uploader("Upload Hospice Timesheets (Multiple)", type=["xls", "xlsx"],
+                                               accept_multiple_files=True, key="batch_hospice")
+
+    st.markdown("")
+    if st.button("🚀 Run Enterprise Batch Processing Across All LOBs", type="primary", use_container_width=True):
+        combined_dfs = []
+
+        # 1. Process Home Health if provided
+        if batch_hh_file is not None:
+            try:
+                if batch_hh_file.name.endswith(".csv"):
+                    df_hh = pd.read_csv(batch_hh_file)
+                else:
+                    xls_hh = pd.ExcelFile(batch_hh_file)
+                    sheet_hh = "Data Export" if "Data Export" in xls_hh.sheet_names else xls_hh.sheet_names[0]
+                    df_hh = pd.read_excel(xls_hh, sheet_name=sheet_hh)
+                processed_hh = process_home_health_payroll(df_hh)
+                processed_hh["Source LOB"] = "Home Health"
+                combined_dfs.append(processed_hh)
+                st.success("✅ Home Health batch file processed successfully.")
+            except Exception as e:
+                st.error(f"Error processing Home Health file in batch: {e}")
+
+        # 2. Process Home Care if provided
+        if batch_hc_file is not None:
+            try:
+                if batch_hc_file.name.endswith(".csv"):
+                    df_hc = pd.read_csv(batch_hc_file)
+                else:
+                    xls_hc = pd.ExcelFile(batch_hc_file)
+                    df_hc = pd.read_excel(xls_hc, sheet_name=xls_hc.sheet_names[0])
+                processed_hc = process_home_care_payroll(df_hc)
+                processed_hc["Source LOB"] = "Home Care"
+                combined_dfs.append(processed_hc)
+                st.success("✅ Home Care batch file processed successfully.")
+            except Exception as e:
+                st.error(f"Error processing Home Care file in batch: {e}")
+
+        # 3. Process Hospice if provided
+        if batch_hospice_files:
+            try:
+                processed_hospice = process_hospice_reconciliation(None, batch_hospice_files)
+                processed_hospice["Source LOB"] = "Hospice"
+                combined_dfs.append(processed_hospice)
+                st.success(f"✅ Reconciled {len(batch_hospice_files)} Hospice timesheet files successfully.")
+            except Exception as e:
+                st.error(f"Error processing Hospice files in batch: {e}")
+
+        if combined_dfs:
+            master_batch_df = pd.concat(combined_dfs, ignore_index=True)
+            st.session_state.processed_df = master_batch_df
+            st.session_state.batch_processed_df = master_batch_df
+
+            st.markdown("---")
+            st.markdown("### 📊 Master Enterprise Cross-LOB Combined Preview")
+            st.dataframe(master_batch_df, use_container_width=True)
+
+            # Summary Metrics Across All LOBs
+            total_batch_amount = pd.to_numeric(master_batch_df["Amount"], errors="coerce").sum()
+            total_batch_hours = pd.to_numeric(master_batch_df["Hours"], errors="coerce").sum()
+
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total Enterprise Payroll Liability", f"${total_batch_amount:,.2f}")
+            m2.metric("Total Enterprise Billable Hours", f"{total_batch_hours:,.1f} hrs")
+            m3.metric("Total Processed Line Records", f"{len(master_batch_df):,} rows")
+        else:
+            st.warning(
+                "Please upload at least one file across any of the Line of Business uploaders above to run the batch.")
+
+    # Display cached batch results if available
+    if st.session_state.batch_processed_df is not None and not batch_hospice_files and not batch_hc_file and not batch_hh_file:
+        st.markdown("### 📋 Current Cached Batch Output")
+        st.dataframe(st.session_state.batch_processed_df, use_container_width=True)
+
 elif current_tab == "Export Center":
     st.markdown("## 📥 Export Center")
     st.write(
         "Download your validated, formatted payroll ready for direct import into"
-        " Paychex."
+        " Paychex (supports both individual and multi-LOB batch outputs)."
     )
 
     if st.session_state.processed_df is not None:
@@ -737,14 +827,14 @@ elif current_tab == "Export Center":
         st.download_button(
             label="📥 Download Paychex-Ready Excel File",
             data=buffer,
-            file_name="Paychex_Import_Ready.xlsx",
+            file_name="Master_Paychex_Import_Ready.xlsx",
             mime=(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             ),
             type="primary",
         )
     else:
-        st.warning("No processed data available. Please upload a file first.")
+        st.warning("No processed data available. Please process a file or run a batch first.")
 
 elif current_tab == "Developer Support":
     st.markdown("## ⚙️ Developer Support & Documentation")
@@ -765,4 +855,7 @@ elif current_tab == "Developer Support":
        - Enforces the 80-hour threshold across multiple rates per employee, retaining original rates for overtime.
        - Replaces home health mileage with official timesheet mileage tagged as **MILEAGE REIMBURSEMENT** (`Units * 0.73`).
        - Features an automated summary screen showing total computed amounts and individual employee breakdown cards.
+    4. **Multi-LOB Batch Enterprise Pipeline**:
+       - Runs all three lines of business concurrently in a separate dedicated workspace.
+       - Combines records seamlessly into a unified master output DataFrame ready for enterprise-wide payroll submission.
     """)
