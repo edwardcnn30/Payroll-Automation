@@ -272,7 +272,6 @@ def process_home_care_payroll(df):
     if "Pay Component" not in df.columns:
         df["Pay Component"] = ""
 
-    # Normalize existing mileage components or 0.73 rates
     for index, row in df.iterrows():
         comp = str(row.get("Pay Component", "")).strip().lower()
         rate = pd.to_numeric(row.get("Rate"), errors="coerce")
@@ -335,10 +334,11 @@ def process_home_care_payroll(df):
 def process_hospice_reconciliation(hh_df, timesheet_files):
     hh_df.columns = [str(c).strip() for c in hh_df.columns]
 
+    # Identify employee and ID columns robustly
     emp_col = next(
         (c for c in hh_df.columns if 'employee' in c.lower() or 'name' in c.lower() or 'worker' in c.lower()),
         hh_df.columns[0])
-    id_col = next((c for c in hh_df.columns if 'id' in c.lower() or 'emp' in c.lower()),
+    id_col = next((c for c in hh_df.columns if 'id' in c.lower() or 'emp' in c.lower() or 'worker' in c.lower()),
                   hh_df.columns[1] if len(hh_df.columns) > 1 else hh_df.columns[0])
 
     id_mapping = {}
@@ -358,20 +358,49 @@ def process_hospice_reconciliation(hh_df, timesheet_files):
             file_base = ts_file.name.split(".")[0]
             file_lower = file_base.lower()
 
-            worker_id = ""
-            matched_key = ""
-            for k, v in id_mapping.items():
-                if k in file_lower or file_lower in k:
-                    worker_id = v
-                    matched_key = k
+            # Extract employee name from the timesheet header if present, else fallback to filename
+            ts_employee_name = ""
+            for r_idx in range(min(5, len(df_ts))):
+                for c_idx in range(len(df_ts.columns)):
+                    cell_val = str(df_ts.iloc[r_idx, c_idx]).strip()
+                    if cell_val and cell_val.lower() not in ["nan", "none", "employee", "name", "worker"]:
+                        for k in id_mapping.keys():
+                            if k in cell_val.lower() or cell_val.lower() in k:
+                                ts_employee_name = k
+                                break
+                        if ts_employee_name:
+                            break
+                if ts_employee_name:
                     break
 
-            if not worker_id:
+            worker_id = ""
+            matched_key = ""
+
+            # 1. Try matching extracted name or filename against master keys
+            search_targets = [ts_employee_name, file_lower]
+            for target in search_targets:
+                if not target:
+                    continue
                 for k, v in id_mapping.items():
-                    tokens = [t for t in k.split() if len(t) > 1]
-                    if any(t in file_lower for t in tokens):
+                    if k in target or target in k:
                         worker_id = v
                         matched_key = k
+                        break
+                if worker_id:
+                    break
+
+            # 2. Token-based fallback matching
+            if not worker_id:
+                for target in search_targets:
+                    if not target:
+                        continue
+                    tokens = [t for t in target.split() if len(t) > 2]
+                    for k, v in id_mapping.items():
+                        if any(t in k for t in tokens):
+                            worker_id = v
+                            matched_key = k
+                            break
+                    if worker_id:
                         break
 
             hours_row_idx = -1
@@ -423,7 +452,8 @@ def process_hospice_reconciliation(hh_df, timesheet_files):
             total_worker_hours = sum([h for _, h in rate_hours_list])
             accumulated_hours = 0.0
 
-            display_name = matched_key.title() if matched_key else file_base
+            display_name = matched_key.title() if matched_key else (
+                ts_employee_name.title() if ts_employee_name else file_base)
             formatted_worker_id = int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace('.', '',
                                                                                                      1).isdigit() else worker_id
             labor_override = f"{display_name} - {formatted_worker_id} ({formatted_worker_id})" if formatted_worker_id else display_name
@@ -694,7 +724,7 @@ elif current_tab == "Developer Support":
        - Hourly rows are aggregated per Worker ID and any total hours over 80 are split into **Overtime**.
        - Mileage entries normalized to **MILEAGE REIMBURSEMENT**.
     3. **Hospice Reconciliation Rules**:
-       - Matches hospice timesheets against Home Health master data to fetch Worker IDs.
+       - Matches hospice timesheets against Home Health master data by scanning internal cell headers as well as filenames to fetch Worker IDs.
        - Enforces the 80-hour threshold across multiple rates per employee, retaining original rates for overtime.
        - Replaces home health mileage with official timesheet mileage tagged as **MILEAGE REIMBURSEMENT** (`Units * 0.73`).
     """)
