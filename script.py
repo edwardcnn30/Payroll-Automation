@@ -142,7 +142,7 @@ if "raw_df" not in st.session_state:
     st.session_state.raw_df = None
 
 
-# --- 1. HOME HEALTH PROCESSOR (Untouched) ---
+# --- 1. HOME HEALTH PROCESSOR ---
 def process_home_health_payroll(df):
     hourly_rates = {
         1351.0: 30.00,
@@ -255,12 +255,10 @@ def process_home_health_payroll(df):
     return final_df
 
 
-# --- 2. HOME CARE PROCESSOR (Fixed to target 'Pay Component') ---
+# --- 2. HOME CARE PROCESSOR (Strictly targets 'Hourly' rows only) ---
 def process_home_care_payroll(df):
-    # Clean up column names
     df.columns = [str(c).strip() for c in df.columns]
 
-    # Normalize variant column names to 'Pay Component'
     for col in ["Pay Comp Rate", "Pay Component Rate", "Pay Component"]:
         if col in df.columns:
             df = df.rename(columns={col: "Pay Component"})
@@ -274,22 +272,21 @@ def process_home_care_payroll(df):
     if "Pay Component" not in df.columns:
         df["Pay Component"] = ""
 
-    # Convert Hours to numeric safely
     df["Hours"] = pd.to_numeric(df["Hours"], errors="coerce").fillna(0)
 
-    # Target rows: Pay Component is "Hourly" (case-insensitive) or blank/NaN
-    def is_target_row(val):
-        if pd.isna(val) or str(val).strip() == "" or str(val).strip().lower() == "hourly":
+    # Strictly target rows where Pay Component is explicitly "Hourly"
+    def is_hourly_row(val):
+        if pd.notna(val) and str(val).strip().lower() == "hourly":
             return True
         return False
 
-    # Calculate total hours per Worker ID specifically for target rows
+    # Calculate total Hourly hours per Worker ID
     worker_totals = {}
     for _, row in df.iterrows():
         worker_id = row["Worker ID"]
         comp = row.get("Pay Component", "")
         hrs = row["Hours"]
-        if is_target_row(comp) and hrs > 0:
+        if is_hourly_row(comp) and hrs > 0:
             worker_totals[worker_id] = worker_totals.get(worker_id, 0.0) + hrs
 
     processed_rows = []
@@ -301,8 +298,8 @@ def process_home_care_payroll(df):
         hrs = row["Hours"]
         total_w_hours = worker_totals.get(worker_id, 0.0)
 
-        # If it's a target row and total hours exceed 80
-        if is_target_row(comp) and total_w_hours > 80:
+        # Only apply overtime split if it's explicitly an "Hourly" row and total hourly hours > 80
+        if is_hourly_row(comp) and total_w_hours > 80:
             accumulated = worker_accumulated_hours.get(worker_id, 0.0)
 
             if accumulated < 80:
@@ -315,12 +312,10 @@ def process_home_care_payroll(df):
                     ot_part = hrs - allowed_regular
                     worker_accumulated_hours[worker_id] = 80.0
 
-                    # Regular portion row
                     reg_row = row.to_dict()
                     reg_row["Hours"] = reg_part
                     processed_rows.append(reg_row)
 
-                    # Overtime portion row (tagged correctly under Pay Component)
                     ot_row = row.to_dict()
                     ot_row["Pay Component"] = "Overtime"
                     ot_row["Hours"] = ot_part
@@ -331,7 +326,6 @@ def process_home_care_payroll(df):
                             pass
                     processed_rows.append(ot_row)
             else:
-                # Exceeds 80, entire row becomes Overtime under Pay Component
                 ot_row = row.to_dict()
                 ot_row["Pay Component"] = "Overtime"
                 if "Rate Number" in ot_row and pd.notnull(ot_row["Rate Number"]) and ot_row["Rate Number"] != "":
@@ -341,6 +335,7 @@ def process_home_care_payroll(df):
                         pass
                 processed_rows.append(ot_row)
         else:
+            # Blank rows and non-hourly rows pass through completely untouched
             processed_rows.append(row.to_dict())
 
     return pd.DataFrame(processed_rows)
@@ -410,7 +405,7 @@ elif current_tab == "Upload Data":
     else:  # Home Care Upload
         st.markdown("### 🏡 Home Care Payroll Upload")
         st.write(
-            "Upload your pre-formatted Paychex import-ready file for Home Care processing (Automatic Overtime tagging in **Pay Component** for Hourly and blank rows > 80 hrs).")
+            "Upload your pre-formatted Paychex import-ready file for Home Care processing (Automatic Overtime tagging applied strictly to **Hourly** rows exceeding 80 hours; blanks remain untouched).")
         uploaded_file = st.file_uploader("Choose Home Care file", type=["xls", "xlsx", "csv"], key="hc_file")
 
         if uploaded_file is not None:
@@ -475,6 +470,6 @@ elif current_tab == "Developer Support":
        - Mileage entries at the bottom at **0.73** rate.
     2. **Home Care Rules**:
        - Evaluates pre-formatted Paychex ready files.
-       - Aggregates hours across **Hourly** and **blank** Pay Components per Worker ID.
-       - Automatically splits or tags hours exceeding 80 as **Overtime** directly under the **Pay Component** column.
+       - Aggregates hours strictly across explicit **Hourly** rows per Worker ID.
+       - Blanks and other components remain untouched.
     """)
