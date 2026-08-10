@@ -209,7 +209,7 @@ def process_home_health_payroll(df):
             "Hours": total_hours if pay_type == "Hourly" else "",
             "Units": "",
             "Line Date": "",
-            "Amount": total_amount if pay_type == "PRN Points" else "",
+            "Amount": total_amount if pay_type == "PRN Points" else total_amount,
             "Check": "",
             "Override State": "",
             "Override Local": "",
@@ -223,6 +223,7 @@ def process_home_health_payroll(df):
             if total_hours > 80:
                 reg_row = base_row_data.copy()
                 reg_row["Hours"] = 80.0
+                reg_row["Amount"] = round(80.0 * rate, 2)
                 hourly_rows.append(reg_row)
 
                 ot_hours = total_hours - 80.0
@@ -230,6 +231,7 @@ def process_home_health_payroll(df):
                 ot_row["Pay Component"] = "Overtime"
                 ot_row["Rate"] = rate if rate else ""
                 ot_row["Hours"] = ot_hours
+                ot_row["Amount"] = round(ot_hours * rate, 2)
                 overtime_rows.append(ot_row)
             else:
                 hourly_rows.append(base_row_data)
@@ -284,56 +286,25 @@ def process_home_care_payroll(df):
             df.at[index, "Amount"] = round(float(row["Hours"]) * 0.73, 2)
 
     df["Hours"] = pd.to_numeric(df["Hours"], errors="coerce").fillna(0)
+    df["Rate"] = pd.to_numeric(df["Rate"], errors="coerce").fillna(0)
 
     for index, row in df.iterrows():
         comp = row.get("Pay Component")
         if comp != "MILEAGE REIMBURSEMENT" and (pd.isna(comp) or str(comp).strip() == ""):
             df.at[index, "Pay Component"] = "Overtime"
 
-    hourly_totals = (
-        df[df["Pay Component"].str.lower() == "hourly"]
-        .groupby("Worker ID")["Hours"]
-        .sum()
-    )
-    processed_rows = []
-    worker_accumulated = {}
+        # Calculate amount if missing
+        if pd.isna(row.get("Amount")) or row.get("Amount") == "":
+            hrs = row.get("Hours", 0)
+            rt = row.get("Rate", 0)
+            if hrs > 0 and rt > 0:
+                df.at[index, "Amount"] = round(hrs * rt, 2)
 
-    for _, row in df.iterrows():
-        w_id = row["Worker ID"]
-        comp = str(row.get("Pay Component", "")).strip().lower()
-
-        if comp == "hourly" and hourly_totals.get(w_id, 0) > 80:
-            acc = worker_accumulated.get(w_id, 0)
-
-            if acc < 80:
-                allowed = 80 - acc
-                if row["Hours"] <= allowed:
-                    worker_accumulated[w_id] = acc + row["Hours"]
-                    processed_rows.append(row.to_dict())
-                else:
-                    reg = row.to_dict()
-                    reg["Hours"] = allowed
-                    processed_rows.append(reg)
-
-                    ot = row.to_dict()
-                    ot["Pay Component"] = "Overtime"
-                    ot["Hours"] = row["Hours"] - allowed
-                    processed_rows.append(ot)
-
-                    worker_accumulated[w_id] = 80
-            else:
-                ot = row.to_dict()
-                ot["Pay Component"] = "Overtime"
-                processed_rows.append(ot)
-        else:
-            processed_rows.append(row.to_dict())
-
-    return pd.DataFrame(processed_rows)
+    return df
 
 
 # --- 3. HOSPICE RECONCILIATION PROCESSOR ---
 def process_hospice_reconciliation(hh_file, timesheet_files):
-    # Authoritative explicit mapping dictionary based on exact roster
     authoritative_id_map = {
         "simowski, maggie": 1162, "maggie simowski": 1162, "maggies": 1162, "maggie": 1162, "simowski": 1162,
         "cecil, katherine": 1351, "katherine cecil": 1351, "katherines": 1351, "katherine": 1351, "cecil": 1351,
@@ -484,6 +455,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
             labor_override = f"{display_name} - {formatted_worker_id} ({formatted_worker_id})" if formatted_worker_id else display_name
 
             for rate, hours in rate_hours_list:
+                line_amount = round(rate * hours, 2)
                 base_item = {
                     "Review": "✅ Validated",
                     "Client ID": 16068715,
@@ -495,7 +467,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     "Hours": hours,
                     "Units": "",
                     "Line Date": "",
-                    "Amount": "",
+                    "Amount": line_amount,
                     "Check": "",
                     "Override State": "",
                     "Override Local": "",
@@ -511,16 +483,20 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                         else:
                             reg_item = base_item.copy()
                             reg_item["Hours"] = allowed
+                            reg_item["Amount"] = round(allowed * rate, 2)
                             all_reconciled_rows.append(reg_item)
 
+                            ot_hours = hours - allowed
                             ot_item = base_item.copy()
                             ot_item["Pay Component"] = "Overtime"
-                            ot_item["Hours"] = hours - allowed
+                            ot_item["Hours"] = ot_hours
+                            ot_item["Amount"] = round(ot_hours * rate, 2)
                             all_reconciled_rows.append(ot_item)
                             accumulated_hours = 80.0
                     else:
                         ot_item = base_item.copy()
                         ot_item["Pay Component"] = "Overtime"
+                        ot_item["Amount"] = line_amount
                         all_reconciled_rows.append(ot_item)
                 else:
                     all_reconciled_rows.append(base_item)
@@ -692,6 +668,51 @@ elif current_tab == "Upload Data":
                 st.markdown("### 🔍 Comparison & Reconciled Output Preview")
                 st.dataframe(processed, use_container_width=True)
 
+                # --- NEW SCREEN / SECTION: TOTAL AMOUNTS & EARNINGS BREAKDOWN ---
+                st.markdown("---")
+                st.markdown("### 💰 Employee Total Earnings & Earnings Breakdown")
+                st.write(
+                    "Aggregated totals showing computed line amounts (`Rate * Hours` or `Units * Rate`), total earnings per Worker ID, and individual employee breakdowns (page break view)."
+                )
+
+                # Prepare summary dataframe for aggregation
+                summary_df = processed.copy()
+                summary_df["Rate"] = pd.to_numeric(summary_df["Rate"], errors="coerce").fillna(0)
+                summary_df["Hours"] = pd.to_numeric(summary_df["Hours"], errors="coerce").fillna(0)
+                summary_df["Units"] = pd.to_numeric(summary_df["Units"], errors="coerce").fillna(0)
+                summary_df["Amount"] = pd.to_numeric(summary_df["Amount"], errors="coerce").fillna(0)
+
+                # Group by Worker ID & Labor Override
+                worker_summary = (
+                    summary_df.groupby(["Worker ID", "Labor Override"])
+                    .agg(
+                        Total_Hours=("Hours", "sum"),
+                        Total_Mileage_Units=("Units", "sum"),
+                        Total_Earnings=("Amount", "sum"),
+                    )
+                    .reset_index()
+                )
+
+                st.markdown("#### 📊 Master Earnings Summary by Employee")
+                st.dataframe(worker_summary, use_container_width=True)
+
+                st.markdown("#### 📄 Individual Employee Earnings Breakdown (Page Break View)")
+                for _, w_row in worker_summary.iterrows():
+                    w_id = w_row["Worker ID"]
+                    w_name = w_row["Labor Override"]
+                    w_earnings = w_row["Total_Earnings"]
+                    w_hrs = w_row["Total_Hours"]
+                    w_miles = w_row["Total_Mileage_Units"]
+
+                    with st.expander(f"👤 {w_name} | Total Payout: ${w_earnings:,.2f}"):
+                        sub_df = summary_df[summary_df["Worker ID"] == w_id]
+                        st.dataframe(sub_df, use_container_width=True)
+
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("Total Hours", f"{w_hrs:,.1f} hrs")
+                        c2.metric("Total Mileage Units", f"{w_miles:,.1f} miles")
+                        c3.metric("Total Earnings", f"${w_earnings:,.2f}")
+
             except Exception as e:
                 st.error(f"Error running Hospice reconciliation: {e}")
         else:
@@ -743,4 +764,5 @@ elif current_tab == "Developer Support":
        - Uses an authoritative employee reference directory alongside automated content scanning to match and populate correct Worker IDs.
        - Enforces the 80-hour threshold across multiple rates per employee, retaining original rates for overtime.
        - Replaces home health mileage with official timesheet mileage tagged as **MILEAGE REIMBURSEMENT** (`Units * 0.73`).
+       - Features an automated summary screen showing total computed amounts and individual employee breakdown cards.
     """)
