@@ -873,16 +873,17 @@ elif current_tab == "Multi-LOB Batch":
         st.dataframe(st.session_state.batch_processed_df, use_container_width=True)
 
         st.markdown("---")
-        st.markdown("### 📊 Multi-LOB Master Earnings & Totals Summary")
-        st.write("Summary of Total Hours, Mileage Units, and Amounts across all three lines of business:")
+        st.markdown("### 📊 Business-Level LOB Totals Summary")
+        st.write("Aggregated totals across each Line of Business and Grand Totals:")
 
         summary_df = st.session_state.batch_processed_df.copy()
         summary_df["Hours"] = pd.to_numeric(summary_df["Hours"], errors="coerce").fillna(0)
         summary_df["Units"] = pd.to_numeric(summary_df["Units"], errors="coerce").fillna(0)
         summary_df["Amount"] = pd.to_numeric(summary_df["Amount"], errors="coerce").fillna(0)
 
-        master_summary = (
-            summary_df.groupby(["Source LOB", "Worker ID", "Labor Override"])
+        # Group strictly by LOB for high-level business totals
+        lob_summary = (
+            summary_df.groupby("Source LOB")
             .agg(
                 Total_Hours=("Hours", "sum"),
                 Total_Mileage_Units=("Units", "sum"),
@@ -890,7 +891,17 @@ elif current_tab == "Multi-LOB Batch":
             )
             .reset_index()
         )
-        st.dataframe(master_summary, use_container_width=True)
+
+        # Add Grand Total Row
+        grand_total_row = pd.DataFrame({
+            "Source LOB": ["Grand Total"],
+            "Total_Hours": [lob_summary["Total_Hours"].sum()],
+            "Total_Mileage_Units": [lob_summary["Total_Mileage_Units"].sum()],
+            "Total_Amount": [lob_summary["Total_Amount"].sum()]
+        })
+
+        final_summary_display = pd.concat([lob_summary, grand_total_row], ignore_index=True)
+        st.dataframe(final_summary_display, use_container_width=True)
 
 elif current_tab == "Export Center":
     st.markdown("## 📥 Export Center")
