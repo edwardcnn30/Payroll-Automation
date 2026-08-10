@@ -818,6 +818,9 @@ elif current_tab == "Upload Data":
 
 elif current_tab == "Multi-LOB Batch":
     st.markdown("### ⚡ Enterprise Multi-LOB Batch Processing Pipeline")
+    st.write(
+        "Upload all departmental files simultaneously. Hospice reconciliation will automatically filter out duplicate entries from the Home Health master file, ensuring clean, audit-ready Paychex exports.")
+
     col_b1, col_b2, col_b3 = st.columns(3)
     with col_b1:
         batch_hh_file = st.file_uploader("Upload Home Health Data", type=["xls", "xlsx", "csv"], key="batch_hh")
@@ -828,152 +831,95 @@ elif current_tab == "Multi-LOB Batch":
                                                accept_multiple_files=True, key="batch_hospice")
 
     if st.button("🚀 Run Enterprise Batch Processing Across All LOBs", type="primary", use_container_width=True):
-        combined_dfs = []
-        if batch_hh_file is not None:
-            try:
-                df_hh = pd.read_csv(batch_hh_file) if batch_hh_file.name.endswith(".csv") else pd.read_excel(
-                    batch_hh_file,
-                    sheet_name="Data Export" if "Data Export" in pd.ExcelFile(batch_hh_file).sheet_names else 0)
-                processed_hh = process_home_health_payroll(df_hh)
-                processed_hh["Source LOB"] = "Home Health"
-                combined_dfs.append(processed_hh)
-            except Exception as e:
-                st.error(f"Error Home Health batch: {e}")
+        try:
+            hospice_processed = pd.DataFrame()
+            hh_processed = pd.DataFrame()
+            hc_processed = pd.DataFrame()
 
-        if batch_hc_file is not None:
-            try:
-                df_hc = pd.read_csv(batch_hc_file) if batch_hc_file.name.endswith(".csv") else pd.read_excel(
-                    batch_hc_file, sheet_name=0)
-                processed_hc = process_home_care_payroll(df_hc)
-                processed_hc["Source LOB"] = "Home Care"
-                combined_dfs.append(processed_hc)
-            except Exception as e:
-                st.error(f"Error Home Care batch: {e}")
+            # 1. Process Hospice First
+            if batch_hospice_files:
+                hospice_processed = process_hospice_reconciliation(batch_hh_file, batch_hospice_files)
 
-        if batch_hospice_files:
-            try:
-                processed_hospice = process_hospice_reconciliation(None, batch_hospice_files)
-                processed_hospice["Source LOB"] = "Hospice"
-                combined_dfs.append(processed_hospice)
-            except Exception as e:
-                st.error(f"Error Hospice batch: {e}")
+            # Extract worker IDs processed under Hospice to prevent duplication in Home Health
+            hospice_worker_ids = set()
+            if not hospice_processed.empty and "Worker ID" in hospice_processed.columns:
+                hospice_worker_ids = set(hospice_processed["Worker ID"].dropna().astype(str).str.strip())
 
-        if combined_dfs:
-            master_batch_df = pd.concat(combined_dfs, ignore_index=True)
-            st.session_state.processed_df = master_batch_df
-            st.session_state.batch_processed_df = master_batch_df
-            st.success("✅ Multi-LOB Batch processed successfully!")
-        else:
-            st.warning("Please upload at least one file.")
+            # 2. Process Home Health (Filtering out Hospice workers)
+            if batch_hh_file is not None:
+                if batch_hh_file.name.endswith(".csv"):
+                    hh_raw = pd.read_csv(batch_hh_file)
+                else:
+                    xls = pd.ExcelFile(batch_hh_file)
+                    sheet_name = "Data Export" if "Data Export" in xls.sheet_names else xls.sheet_names[0]
+                    hh_raw = pd.read_excel(xls, sheet_name=sheet_name)
 
-    if st.session_state.batch_processed_df is not None:
-        st.markdown("### 🔍 Combined Multi-LOB Preview")
-        st.dataframe(st.session_state.batch_processed_df, use_container_width=True)
+                hh_temp_processed = process_home_health_payroll(hh_raw)
 
-        st.markdown("---")
-        st.markdown("### 📊 Business-Level LOB Totals Summary")
-        st.write(
-            "Aggregated totals across each Line of Business (calculated from employee earnings: Hours × Rate, Mileage reimbursements, and PRN amounts):")
+                if hospice_worker_ids and "Worker ID" in hh_temp_processed.columns:
+                    hh_temp_processed["_worker_str"] = hh_temp_processed["Worker ID"].astype(str).str.strip()
+                    hh_processed = hh_temp_processed[~hh_temp_processed["_worker_str"].isin(hospice_worker_ids)].drop(
+                        columns=["_worker_str"])
+                else:
+                    hh_processed = hh_temp_processed
 
-        summary_df = st.session_state.batch_processed_df.copy()
+            # 3. Process Home Care
+            if batch_hc_file is not None:
+                if batch_hc_file.name.endswith(".csv"):
+                    hc_raw = pd.read_csv(batch_hc_file)
+                else:
+                    xls = pd.ExcelFile(batch_hc_file)
+                    hc_raw = pd.read_excel(xls, sheet_name=xls.sheet_names[0])
+                hc_processed = process_home_care_payroll(hc_raw)
 
+            # Combine all outputs
+            combined_dfs = [df for df in [hh_processed, hc_processed, hospice_processed] if not df.empty]
+            if combined_dfs:
+                final_batch_df = pd.concat(combined_dfs, ignore_index=True)
+                st.session_state.batch_processed_df = final_batch_df
+                st.session_state.processed_df = final_batch_df
 
-        # Calculate true earnings per row (since export amount columns are left blank for Paychex import)
-        def calculate_total_pay(row):
-            comp = str(row.get("Pay Component", "")).lower()
-            hrs = pd.to_numeric(row.get("Hours", 0), errors="coerce") or 0.0
-            rate = pd.to_numeric(row.get("Rate", 0), errors="coerce") or 0.0
-            units = pd.to_numeric(row.get("Units", 0), errors="coerce") or 0.0
-            amount = pd.to_numeric(row.get("Amount", 0), errors="coerce") or 0.0
+                st.success(
+                    "Enterprise batch processing completed successfully with duplicate Hospice filtering applied!")
 
-            if "mileage" in comp or rate == 0.73:
-                return units * 0.73
-            elif amount > 0 and comp == "prn points":
-                return amount
+                st.markdown("### 🔍 Consolidated Batch Output Preview")
+                st.dataframe(final_batch_df, use_container_width=True)
+
+                st.markdown("---")
+                st.markdown("### 📊 Total Amounts & Earnings Summary (Overall Three LOBs)")
+
+                summary_calc = final_batch_df.copy()
+                summary_calc["Amount"] = pd.to_numeric(summary_calc["Amount"], errors="coerce").fillna(0)
+                summary_calc["Hours"] = pd.to_numeric(summary_calc["Hours"], errors="coerce").fillna(0)
+                summary_calc["Units"] = pd.to_numeric(summary_calc["Units"], errors="coerce").fillna(0)
+
+                total_summary = (
+                    summary_calc.groupby("Worker ID")
+                    .agg(
+                        Employee_Name=("Labor Override", "first"),
+                        Total_Hours=("Hours", "sum"),
+                        Total_Mileage_Units=("Units", "sum"),
+                        Total_Explicit_Amount=("Amount", "sum")
+                    )
+                    .reset_index()
+                )
+
+                st.dataframe(total_summary, use_container_width=True)
+
+                col_m1, col_m2, col_m3 = st.columns(3)
+                with col_m1:
+                    st.metric("Total Processed Records", len(final_batch_df))
+                with col_m2:
+                    st.metric("Total Combined Hours", f"{summary_calc['Hours'].sum():,.2f}")
+                with col_m3:
+                    st.metric("Total Mileage Units", f"{summary_calc['Units'].sum():,.2f}")
             else:
-                return hrs * rate
+                st.warning("No valid data processed from the uploaded files.")
 
-
-        summary_df["Calculated_Amount"] = summary_df.apply(calculate_total_pay, axis=1)
-        summary_df["Hours"] = pd.to_numeric(summary_df["Hours"], errors="coerce").fillna(0)
-        summary_df["Units"] = pd.to_numeric(summary_df["Units"], errors="coerce").fillna(0)
-
-        # Group strictly by LOB for high-level business totals
-        lob_summary = (
-            summary_df.groupby("Source LOB")
-            .agg(
-                Total_Hours=("Hours", "sum"),
-                Total_Mileage_Units=("Units", "sum"),
-                Total_Amount=("Calculated_Amount", "sum"),
-            )
-            .reset_index()
-        )
-
-        # Format values for clean executive presentation
-        lob_summary["Total_Amount"] = lob_summary["Total_Amount"].apply(lambda x: f"${x:,.2f}")
-        lob_summary["Total_Hours"] = lob_summary["Total_Hours"].apply(lambda x: f"{x:,.2f}")
-        lob_summary["Total_Mileage_Units"] = lob_summary["Total_Mileage_Units"].apply(lambda x: f"{x:,.2f}")
-
-        # Add Grand Total Row based on raw numeric aggregations
-        raw_amounts = summary_df.groupby("Source LOB")["Calculated_Amount"].sum()
-        raw_hours = summary_df.groupby("Source LOB")["Hours"].sum()
-        raw_units = summary_df.groupby("Source LOB")["Units"].sum()
-
-        grand_total_row = pd.DataFrame({
-            "Source LOB": ["Grand Total"],
-            "Total_Hours": [f"{raw_hours.sum():,.2f}"],
-            "Total_Mileage_Units": [f"{raw_units.sum():,.2f}"],
-            "Total_Amount": [f"${raw_amounts.sum():,.2f}"]
-        })
-
-        final_summary_display = pd.concat([lob_summary, grand_total_row], ignore_index=True)
-        st.dataframe(final_summary_display, use_container_width=True)
-
-elif current_tab == "Export Center":
-    st.markdown("## 📥 Export Center")
-    st.write(
-        "Download your validated, formatted payroll ready for direct import into"
-        " Paychex. The downloaded file automatically contains **only** the pristine Paychex template columns (Review and tracking columns are removed)."
-    )
-
-    if st.session_state.processed_df is not None:
-        df_export = st.session_state.processed_df.copy()
-
-        cols_to_remove = ["Review", "_EmployeeName", "Source LOB"]
-        for col in cols_to_remove:
-            if col in df_export.columns:
-                df_export = df_export.drop(columns=[col])
-
-        st.dataframe(df_export, use_container_width=True)
-
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            df_export.to_excel(writer, sheet_name="Paychex Import", index=False)
-        buffer.seek(0)
-
-        st.download_button(
-            label="📥 Download Clean Paychex-Ready Excel File",
-            data=buffer,
-            file_name="Master_Paychex_Import_Ready.xlsx",
-            mime=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
-            type="primary",
-        )
+        except Exception as e:
+            st.error(f"Error running Enterprise Batch processing: {e}")
+    elif st.session_state.batch_processed_df is not None:
+        st.markdown("### 🔍 Previously Processed Enterprise Batch Output")
+        st.dataframe(st.session_state.batch_processed_df, use_container_width=True)
     else:
-        st.warning("No processed data available. Please process a file or run a batch first.")
-
-elif current_tab == "Developer Support":
-    st.markdown("## ⚙️ Developer Support & Documentation")
-    st.markdown("""
-    ### 📌 Core Business Rules & Mappings:
-    1. **Home Health, Home Care & Hospice Rules**: 
-       - Displays live `"Review": "✅ Validated"` status.
-       - Enforces 80-hour threshold (splitting hours over 80 into Overtime).
-       - Blank Pay Components automatically tagged as Overtime.
-       - Amount column left blank (`""`) for Hourly, Overtime, Home Care rows, and Mileage rows (leaving calculation to Paychex).
-       - PRN Points with zero amounts are automatically filtered out.
-       - Mileage tagged as **MILEAGE REIMB** at rate `0.73` with units populated and Amount left blank.
-    2. **Export Center**:
-       - Automatically strips out `Review` and tracking columns upon download to guarantee 100% Paychex compatibility.
-    """)
+        st.info("Upload your departmental files above and click the enterprise batch button to begin.")
