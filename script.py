@@ -149,6 +149,67 @@ if "batch_processed_df" not in st.session_state:
 
 # --- 1. HOME HEALTH PROCESSOR ---
 def process_home_health_payroll(df):
+    # Clean up column names and strip whitespace
+    df.columns = [str(c).strip() for c in df.columns]
+
+    # Map columns safely regardless of minor header variations
+    col_map = {}
+    for c in df.columns:
+        c_lower = c.lower()
+        if "employee id" in c_lower or ("emp" in c_lower and "id" in c_lower):
+            col_map[c] = "Employee ID"
+        elif "employee" in c_lower or "name" in c_lower:
+            if "patient" not in c_lower and "client" not in c_lower and "Employee" not in col_map.values():
+                col_map[c] = "Employee"
+        elif "hour" in c_lower:
+            col_map[c] = "Hours"
+        elif "rate" in c_lower:
+            col_map[c] = "Rate"
+        elif "amount" in c_lower:
+            col_map[c] = "Amount"
+
+    df = df.rename(columns=col_map)
+
+    # Programmatically compute hours if raw time-in (Col N index 13) and time-out (Col O index 14) are present
+    # Replicating Excel formula: =MOD(O2-N2,1)*24
+    if len(df.columns) >= 15 and "Hours" in df.columns:
+        try:
+            time_in_col = df.columns[13]  # Column N
+            time_out_col = df.columns[14]  # Column O
+
+            def compute_time_diff(row):
+                try:
+                    t_in = pd.to_datetime(row[time_in_col], errors='coerce')
+                    t_out = pd.to_datetime(row[time_out_col], errors='coerce')
+                    if pd.notnull(t_in) and pd.notnull(t_out):
+                        diff = (t_out - t_in).total_seconds() / 3600.0
+                        if diff < 0:
+                            diff += 24.0  # handles overnight shifts across midnight modulus
+                        return diff
+                except:
+                    pass
+                return row.get("Hours", 0.0)
+
+            # Only override hours if calculated values are valid numeric floats
+            calculated_hrs = df.apply(compute_time_diff, axis=1)
+            if calculated_hrs.sum() > 0:
+                df["Hours"] = calculated_hrs
+        except Exception:
+            pass
+
+    # Ensure standard numeric columns exist
+    if "Employee ID" not in df.columns:
+        df["Employee ID"] = 0
+    if "Employee" not in df.columns:
+        df["Employee"] = ""
+    if "Hours" not in df.columns:
+        df["Hours"] = 0.0
+    if "Mileage" not in df.columns:
+        df["Mileage"] = 0.0
+
+    df["Employee ID"] = pd.to_numeric(df["Employee ID"], errors="coerce").fillna(0)
+    df["Hours"] = pd.to_numeric(df["Hours"], errors="coerce").fillna(0)
+
     hourly_rates = {
         1351.0: 30.00,
         1331.0: 40.00,
@@ -162,9 +223,6 @@ def process_home_health_payroll(df):
         800.0: 25.00,
     }
 
-    if "Mileage" not in df.columns:
-        df["Mileage"] = 0.0
-
     def classify_and_calculate(row):
         emp_id = row["Employee ID"]
         if emp_id in hourly_rates:
@@ -173,7 +231,7 @@ def process_home_health_payroll(df):
             pay_type = "Hourly"
             return rate, amount, pay_type
         else:
-            return row["Rate"], row["Amount"], "PRN Points"
+            return row.get("Rate", 0.0), row.get("Amount", 0.0), "PRN Points"
 
     results = df.apply(classify_and_calculate, axis=1)
     df["Rate"] = [r[0] for r in results]
@@ -192,7 +250,7 @@ def process_home_health_payroll(df):
     mileage_rows = []
 
     for _, row in summary.iterrows():
-        emp_id = int(row["Employee ID"]) if pd.notnull(row["Employee ID"]) else ""
+        emp_id = int(row["Employee ID"]) if pd.notnull(row["Employee ID"]) and row["Employee ID"] != 0 else ""
         emp_name = row["Employee"]
         pay_type = row["Pay Type"]
         total_hours = row["Hours"]
@@ -200,6 +258,7 @@ def process_home_health_payroll(df):
         rate = row["Rate"]
         mileage = row["Mileage"]
 
+        # Automatically construct Column F equivalent ("Employee Name - ID")
         labor_override = f"{emp_name} - {emp_id} ({emp_id})" if emp_id else emp_name
 
         base_row_data = {
@@ -878,7 +937,6 @@ elif current_tab == "Multi-LOB Batch":
         summary_df = st.session_state.batch_processed_df.copy()
 
 
-        # Calculate true earnings per row (since export amount columns are left blank for Paychex import)
         def calculate_total_pay(row):
             comp = str(row.get("Pay Component", "")).lower()
             hrs = pd.to_numeric(row.get("Hours", 0), errors="coerce") or 0.0
@@ -898,7 +956,6 @@ elif current_tab == "Multi-LOB Batch":
         summary_df["Hours"] = pd.to_numeric(summary_df["Hours"], errors="coerce").fillna(0)
         summary_df["Units"] = pd.to_numeric(summary_df["Units"], errors="coerce").fillna(0)
 
-        # Group strictly by LOB for high-level business totals
         lob_summary = (
             summary_df.groupby("Source LOB")
             .agg(
@@ -909,12 +966,10 @@ elif current_tab == "Multi-LOB Batch":
             .reset_index()
         )
 
-        # Format values for clean executive presentation
         lob_summary["Total_Amount"] = lob_summary["Total_Amount"].apply(lambda x: f"${x:,.2f}")
         lob_summary["Total_Hours"] = lob_summary["Total_Hours"].apply(lambda x: f"{x:,.2f}")
         lob_summary["Total_Mileage_Units"] = lob_summary["Total_Mileage_Units"].apply(lambda x: f"{x:,.2f}")
 
-        # Add Grand Total Row based on raw numeric aggregations
         raw_amounts = summary_df.groupby("Source LOB")["Calculated_Amount"].sum()
         raw_hours = summary_df.groupby("Source LOB")["Hours"].sum()
         raw_units = summary_df.groupby("Source LOB")["Units"].sum()
@@ -968,9 +1023,10 @@ elif current_tab == "Developer Support":
     st.markdown("""
     ### 📌 Core Business Rules & Mappings:
     1. **Home Health, Home Care & Hospice Rules**: 
+       - Automatic extraction and calculation of hours from raw time columns (equivalent to `=MOD(O2-N2,1)*24`).
+       - Auto-generation of compound Column F identifier (`Employee Name - ID`).
        - Displays live `"Review": "✅ Validated"` status.
        - Enforces 80-hour threshold (splitting hours over 80 into Overtime).
-       - Blank Pay Components automatically tagged as Overtime.
        - Amount column left blank (`""`) for Hourly, Overtime, Home Care rows, and Mileage rows (leaving calculation to Paychex).
        - PRN Points with zero amounts are automatically filtered out.
        - Mileage tagged as **MILEAGE REIMB** at rate `0.73` with units populated and Amount left blank.
