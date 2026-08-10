@@ -154,7 +154,6 @@ def process_home_health_payroll(uploaded_file_or_df):
 
     if hasattr(uploaded_file_or_df, "read") or hasattr(uploaded_file_or_df, "name"):
         try:
-            # Tier 1: Try reading raw without header to inspect rows for true table header
             if hasattr(uploaded_file_or_df, 'seek'):
                 uploaded_file_or_df.seek(0)
 
@@ -169,13 +168,11 @@ def process_home_health_payroll(uploaded_file_or_df):
                     df_raw = pd.read_excel(uploaded_file_or_df, header=None, engine='openpyxl')
 
             header_row_idx = 0
-            found_header = False
             for r in range(min(30, len(df_raw))):
                 row_str = " ".join([str(df_raw.iloc[r, c]).lower() for c in range(len(df_raw.columns))])
                 if any(k in row_str for k in
                        ['employee', 'worker', 'staff', 'caregiver', 'emp id', 'worker id', 'name', 'hours', 'rate']):
                     header_row_idx = r
-                    found_header = True
                     break
 
             if hasattr(uploaded_file_or_df, 'seek'):
@@ -194,7 +191,6 @@ def process_home_health_payroll(uploaded_file_or_df):
             st.error(f"Parser Exception: {e}")
 
     if df is None or len(df) == 0:
-        # Tier 2 Fallback: Read standard header=0 directly
         if hasattr(uploaded_file_or_df, 'seek'):
             uploaded_file_or_df.seek(0)
         try:
@@ -206,11 +202,9 @@ def process_home_health_payroll(uploaded_file_or_df):
     if df is None or len(df) == 0:
         return pd.DataFrame()
 
-    # Clean up column names
     df.columns = [str(c).strip() for c in df.columns]
     df = df.loc[:, ~df.columns.duplicated()]
 
-    # Flexible column mapping
     col_map = {}
     used_targets = set()
     for c in df.columns:
@@ -237,9 +231,7 @@ def process_home_health_payroll(uploaded_file_or_df):
     df = df.rename(columns=col_map)
     df = df.loc[:, ~df.columns.duplicated()]
 
-    # Positional Fallback if standard mapping missed essential columns
     if "Employee" not in df.columns or len(df.columns) == 0:
-        # Assign standard names based on position if columns are anonymous or unmapped
         cols = list(df.columns)
         if len(cols) > 0: df = df.rename(columns={cols[0]: "Employee"})
         if len(cols) > 1: df = df.rename(columns={cols[1]: "Employee ID"})
@@ -258,10 +250,11 @@ def process_home_health_payroll(uploaded_file_or_df):
     df["Hours"] = pd.to_numeric(df["Hours"], errors="coerce").fillna(0)
     df["Employee"] = df["Employee"].astype(str).str.strip()
 
-    # Filter out blank rows or header artifact rows safely
     df = df[df["Employee"] != ""]
-    df = df[~df["Employee"].str.lower().str.isin(["nan", "none", "unnamed", "employee", "name", "worker"])]
-    df = df[~df["Employee"].str.lower().str.contains("healing hearts|anova care|dba", na=False)]
+    emp_lower_series = df["Employee"].str.lower()
+    invalid_mask = emp_lower_series.isin(["nan", "none", "unnamed", "employee", "name", "worker"])
+    df = df[~invalid_mask]
+    df = df[~emp_lower_series.str.contains("healing hearts|anova care|dba", na=False)]
 
     hourly_rates = {
         1351.0: 30.00,
