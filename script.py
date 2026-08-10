@@ -114,7 +114,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Render Sleek Header Bar with Navigation Items
+# Render Header Bar with Navigation Items
 active_home = "active" if current_tab == "Home" else ""
 active_upload = "active" if current_tab == "Upload Data" else ""
 active_batch = "active" if current_tab == "Multi-LOB Batch" else ""
@@ -159,13 +159,10 @@ def process_home_health_payroll(uploaded_file_or_df):
 
             if fname.endswith('.csv'):
                 df_raw = pd.read_csv(uploaded_file_or_df, header=None)
+            elif fname.endswith('.xls'):
+                df_raw = pd.read_excel(uploaded_file_or_df, header=None, engine='xlrd')
             else:
-                try:
-                    df_raw = pd.read_excel(uploaded_file_or_df, header=None, engine='xlrd')
-                except Exception:
-                    if hasattr(uploaded_file_or_df, 'seek'):
-                        uploaded_file_or_df.seek(0)
-                    df_raw = pd.read_excel(uploaded_file_or_df, header=None, engine='openpyxl')
+                df_raw = pd.read_excel(uploaded_file_or_df, header=None, engine='openpyxl')
 
             header_row_idx = 0
             for r in range(min(30, len(df_raw))):
@@ -180,13 +177,10 @@ def process_home_health_payroll(uploaded_file_or_df):
 
             if fname.endswith('.csv'):
                 df = pd.read_csv(uploaded_file_or_df, skiprows=header_row_idx)
+            elif fname.endswith('.xls'):
+                df = pd.read_excel(uploaded_file_or_df, header=header_row_idx, engine='xlrd')
             else:
-                try:
-                    df = pd.read_excel(uploaded_file_or_df, header=header_row_idx, engine='xlrd')
-                except Exception:
-                    if hasattr(uploaded_file_or_df, 'seek'):
-                        uploaded_file_or_df.seek(0)
-                    df = pd.read_excel(uploaded_file_or_df, header=header_row_idx, engine='openpyxl')
+                df = pd.read_excel(uploaded_file_or_df, header=header_row_idx, engine='openpyxl')
         except Exception as e:
             st.error(f"Parser Exception: {e}")
 
@@ -194,8 +188,8 @@ def process_home_health_payroll(uploaded_file_or_df):
         if hasattr(uploaded_file_or_df, 'seek'):
             uploaded_file_or_df.seek(0)
         try:
-            df = pd.read_excel(uploaded_file_or_df, header=0) if not fname.endswith('.csv') else pd.read_csv(
-                uploaded_file_or_df)
+            df = pd.read_excel(uploaded_file_or_df, header=0, engine='openpyxl') if not fname.endswith(
+                '.csv') else pd.read_csv(uploaded_file_or_df)
         except Exception:
             df = pd.DataFrame()
 
@@ -271,13 +265,20 @@ def process_home_health_payroll(uploaded_file_or_df):
 
     def classify_and_calculate(row):
         emp_id = row["Employee ID"]
+        file_rate = row.get("Rate", 0.0)
+        file_amount = row.get("Amount", 0.0)
+
         if emp_id in hourly_rates:
             rate = hourly_rates[emp_id]
             amount = row["Hours"] * rate
-            pay_type = "Hourly"
-            return rate, amount, pay_type
+            return rate, amount, "Hourly"
+        elif pd.notnull(file_rate) and file_rate > 0:
+            amount = row["Hours"] * file_rate if row["Hours"] > 0 else file_amount
+            return file_rate, amount, "Hourly"
         else:
-            return row.get("Rate", 0.0), row.get("Amount", 0.0), "PRN Points"
+            # Fallback to keep row active even if ID is not in dictionary
+            return file_rate if pd.notnull(file_rate) else 0.0, file_amount if pd.notnull(
+                file_amount) else 0.0, "Hourly"
 
     results = df.apply(classify_and_calculate, axis=1)
     df["Rate"] = [r[0] for r in results]
@@ -353,8 +354,7 @@ def process_home_health_payroll(uploaded_file_or_df):
             mileage_row["Amount"] = ""
             mileage_rows.append(mileage_row)
 
-    prn_rows = [r for r in prn_rows if pd.notnull(r["Amount"]) and r["Amount"] != "" and r["Amount"] != 0]
-
+    # Removed strict amount check that was dropping unmapped/zero rows entirely
     prn_rows = sorted(prn_rows, key=lambda x: str(x["_EmployeeName"]))
     hourly_rows = sorted(hourly_rows, key=lambda x: str(x["_EmployeeName"]))
     overtime_rows = sorted(overtime_rows, key=lambda x: str(x["_EmployeeName"]))
@@ -552,8 +552,14 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
     id_mapping = authoritative_id_map.copy()
     if hh_file is not None:
         try:
-            df_raw = pd.read_excel(hh_file, header=None) if not hasattr(hh_file, 'name') or not hh_file.name.endswith(
-                '.csv') else pd.read_csv(hh_file, header=None)
+            fname = getattr(hh_file, 'name', '').lower()
+            if fname.endswith('.csv'):
+                df_raw = pd.read_csv(hh_file, header=None)
+            elif fname.endswith('.xls'):
+                df_raw = pd.read_excel(hh_file, header=None, engine='xlrd')
+            else:
+                df_raw = pd.read_excel(hh_file, header=None, engine='openpyxl')
+
             header_row_idx = 0
             for r in range(min(30, len(df_raw))):
                 row_str = " ".join([str(df_raw.iloc[r, c]).lower() for c in range(len(df_raw.columns))])
@@ -562,8 +568,12 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     header_row_idx = r
                     break
 
-            hh_df = pd.read_csv(hh_file, skiprows=header_row_idx) if hasattr(hh_file, 'name') and hh_file.name.endswith(
-                '.csv') else pd.read_excel(hh_file, header=header_row_idx)
+            if hasattr(hh_file, 'seek'):
+                hh_file.seek(0)
+            hh_df = pd.read_csv(hh_file, skiprows=header_row_idx) if fname.endswith('.csv') else pd.read_excel(hh_file,
+                                                                                                               header=header_row_idx,
+                                                                                                               engine='openpyxl' if not fname.endswith(
+                                                                                                                   '.xls') else 'xlrd')
             hh_df.columns = [str(c).strip() for c in hh_df.columns]
             hh_df = hh_df.loc[:, ~hh_df.columns.duplicated()]
 
@@ -782,7 +792,7 @@ if current_tab == "Home":
     )
 
 elif current_tab == "Upload Data":
-    st.markdown("## 📂 Select Upload Workflow (Original Individual Tabs)")
+    st.markdown("## 📂 Select Upload Workflow")
 
     upload_mode = st.radio(
         "Choose Upload Type",
@@ -818,36 +828,22 @@ elif current_tab == "Upload Data":
 
     elif upload_mode == "Home Care Upload":
         st.markdown("### 🏡 Home Care Payroll Upload")
-        st.write(
-            "Upload your pre-formatted Paychex import-ready file for Home Care"
-            " processing (Blanks automatically tagged as Overtime; Hourly rows"
-            " split over 80 hours)."
-        )
         uploaded_file = st.file_uploader(
             "Choose Home Care file", type=["xls", "xlsx", "csv"], key="hc_file"
         )
 
         if uploaded_file is not None:
             try:
-                if uploaded_file.name.endswith(".csv"):
-                    df = pd.read_csv(uploaded_file)
-                else:
-                    xls = pd.ExcelFile(uploaded_file)
-                    sheet_name = xls.sheet_names[0]
-                    df = pd.read_excel(xls, sheet_name=sheet_name)
-
+                df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file,
+                                                                                                          sheet_name=0,
+                                                                                                          engine='openpyxl')
                 st.session_state.raw_df = df
-                st.success(
-                    f"Successfully loaded Home Care file: **{uploaded_file.name}**"
-                    f" ({len(df)} rows)"
-                )
+                st.success(f"Successfully loaded Home Care file: **{uploaded_file.name}** ({len(df)} rows)")
 
                 processed = process_home_care_payroll(df)
                 st.session_state.processed_df = processed
 
-                st.markdown(
-                    "### 🔍 Live Review & Validation Preview (Home Care)"
-                )
+                st.markdown("### 🔍 Live Review & Validation Preview (Home Care)")
                 st.dataframe(processed, use_container_width=True)
 
             except Exception as e:
@@ -929,7 +925,7 @@ elif current_tab == "Multi-LOB Batch":
         if batch_hc_file is not None:
             try:
                 df_hc = pd.read_csv(batch_hc_file) if batch_hc_file.name.endswith(".csv") else pd.read_excel(
-                    batch_hc_file, sheet_name=0)
+                    batch_hc_file, sheet_name=0, engine='openpyxl')
                 processed_hc = process_home_care_payroll(df_hc)
                 processed_hc["Source LOB"] = "Home Care"
                 combined_dfs.append(processed_hc)
@@ -958,9 +954,6 @@ elif current_tab == "Multi-LOB Batch":
 
         st.markdown("---")
         st.markdown("### 📊 Business-Level LOB Totals Summary")
-        st.write(
-            "Aggregated totals across each Line of Business (calculated from employee earnings: Hours × Rate, Mileage reimbursements, and PRN amounts):")
-
         summary_df = st.session_state.batch_processed_df.copy()
 
 
@@ -1015,7 +1008,7 @@ elif current_tab == "Export Center":
     st.markdown("## 📥 Export Center")
     st.write(
         "Download your validated, formatted payroll ready for direct import into"
-        " Paychex. The downloaded file automatically contains **only** the pristine Paychex template columns (Review and tracking columns are removed)."
+        " Paychex."
     )
 
     if st.session_state.processed_df is not None:
@@ -1049,14 +1042,7 @@ elif current_tab == "Developer Support":
     st.markdown("## ⚙️ Developer Support & Documentation")
     st.markdown("""
     ### 📌 Core Business Rules & Mappings:
-    1. **Home Health, Home Care & Hospice Rules**: 
-       - Multi-tier bulletproof header auto-detection and positional fallback ensuring 100% successful parsing of legacy `.xls` binary workbooks.
-       - Auto-generation of compound Column F identifier (`Employee Name - ID`).
-       - Displays live `"Review": "✅ Validated"` status.
-       - Enforces 80-hour threshold (splitting hours over 80 into Overtime).
-       - Amount column left blank (`""`) for Hourly, Overtime, Home Care rows, and Mileage rows.
-       - PRN Points with zero amounts are automatically filtered out.
-       - Mileage tagged as **MILEAGE REIMB** at rate `0.73` with units populated and Amount left blank.
-    2. **Export Center**:
-       - Automatically strips out `Review` and tracking columns upon download to guarantee 100% Paychex compatibility.
+    - Robust multi-engine format reading supporting `.xlsx`, `.xls`, and `.csv`.
+    - Fallback rate assignment ensuring rows aren't silently dropped when mapping IDs.
+    - Automated overtime splitting over 80 hours.
     """)
