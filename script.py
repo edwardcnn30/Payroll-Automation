@@ -360,7 +360,6 @@ def process_home_health_payroll(df, hospice_employee_names=None):
                         "_LOB": "Home Health",
                     })
 
-        # Only output Home Health hourly if staff is NOT a hospice worker (suppress HH hourly for hospice staff, keep PRN)
         if not is_hospice_staff and emp_id in hourly_rates and total_employee_hours > 0:
             base_item = {
                 "Review": "✅ Validated",
@@ -692,39 +691,48 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
                 is_brandy = "brandy" in display_name.lower()
 
-                # --- SECURE RATE & HOURS PARSER WITH STRICT GUARDRAILS ---
+                # --- STRICT VERTICAL COLUMN-BASED PARSER ---
                 rate_hours_list = []
                 mileage_units_list = []
 
-                for r_idx in range(len(df_ts)):
-                    for c_idx in range(len(df_ts.columns)):
-                        cell_val_raw = df_ts.iloc[r_idx, c_idx]
-                        try:
-                            val_num = float(str(cell_val_raw).replace("$", "").strip())
-                            if val_num in [80.0, 45.0, 50.0, 100.0, 90.0, 185.0, 26.0, 28.0, 30.0] or val_num == 0.73:
-                                if val_num in [50.0, 100.0] and not is_brandy:
-                                    continue
+                for c_idx in range(len(df_ts.columns)):
+                    col_rates = []
+                    col_hours = []
 
-                                for nc in range(max(0, c_idx - 2), min(len(df_ts.columns), c_idx + 3)):
-                                    if nc == c_idx:
+                    for r_idx in range(len(df_ts)):
+                        cell_val = df_ts.iloc[r_idx, c_idx]
+                        if pd.notnull(cell_val):
+                            cell_str = str(cell_val).replace("$", "").strip()
+                            try:
+                                val_num = float(cell_str)
+                                if val_num in [80.0, 45.0, 50.0, 100.0, 90.0, 185.0, 26.0, 28.0, 30.0,
+                                               10.0] or val_num == 0.73:
+                                    if val_num in [50.0, 100.0] and not is_brandy:
                                         continue
-                                    try:
-                                        nbr_val = float(str(df_ts.iloc[r_idx, nc]).replace("$", "").strip())
-                                        # Strict guardrail: Prevent picking up large ID or footer totals as hours
-                                        if 0 < nbr_val <= 80.0:
-                                            if val_num == 0.73:
-                                                if nbr_val < 500:
-                                                    mileage_units_list.append(nbr_val)
-                                            else:
-                                                pair = (val_num, nbr_val)
-                                                if pair not in rate_hours_list:
-                                                    rate_hours_list.append(pair)
-                                    except:
-                                        pass
-                        except:
-                            pass
+                                    col_rates.append((r_idx, val_num))
+                                elif 0 < val_num <= 200.0:
+                                    col_hours.append((r_idx, val_num))
+                            except:
+                                pass
 
-                # Apply 80-hour overtime rule for hourly components in Hospice
+                    for r_rate, rate_val in col_rates:
+                        best_hr = None
+                        min_dist = 999
+                        for r_hr, hr_val in col_hours:
+                            dist = abs(r_hr - r_rate)
+                            if dist < min_dist and dist <= 3:
+                                min_dist = dist
+                                best_hr = hr_val
+
+                        if best_hr is not None:
+                            if rate_val == 0.73:
+                                if best_hr < 500:
+                                    mileage_units_list.append(best_hr)
+                            else:
+                                pair = (rate_val, best_hr)
+                                if pair not in rate_hours_list:
+                                    rate_hours_list.append(pair)
+
                 accumulated_hospice_hours = 0.0
                 for rate, hours in rate_hours_list:
                     pay_comp = "Hourly"
