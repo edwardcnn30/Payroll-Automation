@@ -751,6 +751,30 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                         except:
                             pass
 
+                # Fallback / Aggregate Scan: Check entire sheet for explicit labeled totals or summary cells matching hourly rates
+                if not rate_hours_list:
+                    for r_idx in range(len(df_ts)):
+                        for c_idx in range(len(df_ts.columns)):
+                            cell_str = str(df_ts.iloc[r_idx, c_idx]).strip().lower()
+                            if any(term in cell_str for term in ["total", "summary", "regular", "hourly"]):
+                                # Look around this cell for rate and hours values
+                                for scan_r in range(max(0, r_idx - 2), min(len(df_ts), r_idx + 3)):
+                                    for scan_c in range(len(df_ts.columns)):
+                                        try:
+                                            val = float(df_ts.iloc[scan_r, scan_c])
+                                            if val in active_rate_dict:
+                                                # Check neighboring cells for corresponding hours amount
+                                                for nc in range(max(0, scan_c - 2),
+                                                                min(len(df_ts.columns), scan_c + 3)):
+                                                    if nc == scan_c:
+                                                        continue
+                                                    nbr_val = float(df_ts.iloc[scan_r, nc])
+                                                    if 0 < nbr_val <= 200:  # Allow larger total hours ranges in summary rows
+                                                        if (val, nbr_val) not in rate_hours_list:
+                                                            rate_hours_list.append((val, nbr_val))
+                                        except:
+                                            pass
+
                 for rate, hours in rate_hours_list:
                     pay_comp = active_rate_dict[rate]
                     all_raw_rows.append({
