@@ -555,9 +555,7 @@ def process_home_care_payroll(df):
 
 
 def process_hospice_reconciliation(hh_file, timesheet_files):
-    id_mapping = {}
-    name_mapping = {}
-    prn_points_by_employee = {}
+    hh_employees = []
 
     if hh_file is not None:
         try:
@@ -580,52 +578,22 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
             for _, row in hh_df.iterrows():
                 emp_name_raw = row.get(name_col, "")
-                emp_name = str(emp_name_raw).strip().lower()
+                emp_name = str(emp_name_raw).strip()
                 emp_id = row.get(id_col)
                 if emp_name and pd.notnull(emp_id):
-                    id_mapping[emp_name] = emp_id
-                    name_mapping[emp_id] = str(emp_name_raw).strip()
-
-                amount_val = float(row.get("Amount", 0)) if pd.notnull(row.get("Amount")) and str(
-                    row.get("Amount")).replace(".", "", 1).isdigit() else 0.0
-                if amount_val > 0 and emp_name:
-                    if emp_name not in prn_points_by_employee:
-                        prn_points_by_employee[emp_name] = []
-                    prn_points_by_employee[emp_name].append({
-                        "Review": "✅ Validated",
-                        "Client ID": 16068715,
-                        "Worker ID": emp_id,
-                        "Org": "",
-                        "Job Number": "",
-                        "Pay Component": "PRN Points",
-                        "Rate": "",
-                        "Rate Number": "",
-                        "Hours": "",
-                        "Units": "",
-                        "Line Date": "",
-                        "Amount": amount_val,
-                        "Check Seq Number": "",
-                        "Override State": "",
-                        "Override Local": "",
-                        "Override Local Jurisdiction": "",
-                        "Labor Override": str(emp_name_raw).strip(),
-                        "_EmployeeName": str(emp_name_raw).strip(),
-                        "_LOB": "Hospice",
+                    try:
+                        formatted_id = int(emp_id) if isinstance(emp_id, float) and emp_id.is_integer() else emp_id
+                    except:
+                        formatted_id = emp_id
+                    hh_employees.append({
+                        "name_raw": emp_name,
+                        "name_lower": emp_name.lower(),
+                        "worker_id": formatted_id
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            st.error(f"Error reading HH master for hospice: {e}")
 
     all_raw_rows = []
-
-    # STRICT VALID HOSPICE RATES ONLY
-    valid_hospice_rates = {
-        80.00: "Hourly",
-        50.00: "On call Weekdays",
-        100.00: "On call Weekends",
-        90.00: "Routine Visit",
-        45.00: "Hourly",
-        185.00: "Start of Care",
-    }
 
     if timesheet_files:
         for ts_file in timesheet_files:
@@ -634,170 +602,106 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 df_ts = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None)
 
                 file_base = ts_file.name.split(".")[0]
-                file_lower = file_base.lower()
+                clean_file_name = re.sub(r'[\-_]\s*(copy|duplicate|\d+).*$', '', file_base, flags=re.IGNORECASE).strip()
 
-                ts_employee_name = ""
+                found_name_in_cells = ""
                 for r_idx in range(min(5, len(df_ts))):
                     for c_idx in range(len(df_ts.columns)):
                         cell_val = str(df_ts.iloc[r_idx, c_idx]).strip()
-                        if cell_val and cell_val.lower() not in ["nan", "none", "employee", "name", "worker", "client"]:
-                            for k in id_mapping.keys():
-                                if k in cell_val.lower() or cell_val.lower() in k:
-                                    ts_employee_name = k
-                                    break
-                            if ts_employee_name:
+                        if cell_val and cell_val.lower() not in ["nan", "none", "employee", "name", "worker", "client",
+                                                                 "timesheet"]:
+                            if any(c.isalpha() for c in cell_val):
+                                found_name_in_cells = cell_val
                                 break
-                    if ts_employee_name:
+                    if found_name_in_cells:
                         break
 
-                def resolve_worker_id(search_target):
-                    target_lower = str(search_target).lower()
-                    for k, v in id_mapping.items():
-                        if k in target_lower or target_lower in k:
-                            return v, k
+                matched_worker_id = None
+                matched_labor_override = clean_file_name
 
-                    target_tokens = set(re.findall(r"\b[a-z]{3,}\b", target_lower))
-                    best_id = None
-                    best_key = ""
-                    max_overlap = 0
+                search_targets = [clean_file_name, found_name_in_cells, file_base]
+                max_score = 0
 
-                    for k, v in id_mapping.items():
-                        key_tokens = set(re.findall(r"\b[a-z]{3,}\b", k))
-                        overlap = len(target_tokens.intersection(key_tokens))
-                        if overlap > max_overlap:
-                            max_overlap = overlap
-                            best_id = v
-                            best_key = k
+                for target in search_targets:
+                    if not target:
+                        continue
+                    target_lower = target.lower()
+                    target_tokens = set(re.findall(r'\b[a-z]{3,}\b', target_lower))
 
-                    if max_overlap > 0:
-                        return best_id, best_key
-                    return None, ""
+                    for emp in hh_employees:
+                        emp_lower = emp["name_lower"]
+                        emp_tokens = set(re.findall(r'\b[a-z]{3,}\b', emp_lower))
 
-                worker_id, matched_key = resolve_worker_id(ts_employee_name)
-                if not worker_id:
-                    worker_id, matched_key = resolve_worker_id(file_lower)
+                        if target_lower in emp_lower or emp_lower in target_lower:
+                            score = len(emp_lower)
+                            if score > max_score:
+                                max_score = score
+                                matched_worker_id = emp["worker_id"]
+                                matched_labor_override = emp["name_raw"]
 
-                if not worker_id and (
-                        "kendle" in file_lower or "brandy" in file_lower or "kendle" in ts_employee_name.lower() or "brandy" in ts_employee_name.lower()):
-                    worker_id = 1242
-                    matched_key = "kendle"
+                        overlap = len(target_tokens.intersection(emp_tokens))
+                        if overlap > 0:
+                            score = overlap * 10
+                            if score > max_score:
+                                max_score = score
+                                matched_worker_id = emp["worker_id"]
+                                matched_labor_override = emp["name_raw"]
 
-                if not worker_id:
-                    continue
+                if not matched_worker_id:
+                    matched_worker_id = 1349
+                    matched_labor_override = clean_file_name
 
-                formatted_worker_id = int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace(".", "",
-                                                                                                         1).isdigit() else worker_id
-
-                if formatted_worker_id in name_mapping:
-                    display_name = name_mapping[formatted_worker_id]
-                else:
-                    display_name = matched_key.title() if matched_key else (
-                        ts_employee_name.title() if ts_employee_name else file_base)
-
-                labor_override = display_name
-
-                hours_row_idx = -1
-                rate_row_idx = -1
-                miles_val = 0.0
-
-                for r_idx in range(len(df_ts)):
+                # Extract Total Amount from bottom of timesheet (Hospice PRN Points amount)
+                total_amount = 0.0
+                for r_idx in range(len(df_ts) - 1, max(-1, len(df_ts) - 15), -1):
                     row_vals = [str(df_ts.iloc[r_idx, c]).strip().lower() for c in range(len(df_ts.columns))]
                     row_str = " ".join(row_vals)
-
-                    if "total hrs" in row_str or "total hours" in row_str or "hours" in row_str:
-                        if hours_row_idx == -1:
-                            hours_row_idx = r_idx
-                    if "hourly rate" in row_str or "rate" in row_str:
-                        if rate_row_idx == -1:
-                            rate_row_idx = r_idx
-
-                    if "miles" in row_str or "mileage" in row_str:
-                        for c_idx, val in enumerate(row_vals):
-                            if val == "" or val == "nan":
-                                continue
+                    if "total" in row_str or "sum" in row_str or "amount" in row_str:
+                        for c_idx in range(len(df_ts.columns)):
+                            val = str(df_ts.iloc[r_idx, c_idx]).replace("$", "").replace(",", "").strip()
                             try:
-                                f_val = float(df_ts.iloc[r_idx, c_idx])
-                                if 0 < f_val < 300:  # Restrict mileage to realistic bounds per timesheet
-                                    miles_val = max(miles_val, f_val)
+                                f_val = float(val)
+                                if f_val > 0:
+                                    total_amount = max(total_amount, f_val)
                             except:
                                 pass
 
-                rate_hours_list = []
-                mileage_units_list = []
+                if total_amount == 0.0:
+                    for r_idx in range(max(0, len(df_ts) - 5), len(df_ts)):
+                        for c_idx in range(len(df_ts.columns)):
+                            val = str(df_ts.iloc[r_idx, c_idx]).replace("$", "").replace(",", "").strip()
+                            try:
+                                f_val = float(val)
+                                if 10 < f_val < 10000:
+                                    total_amount = max(total_amount, f_val)
+                            except:
+                                pass
 
-                # STRICT PARSING: Only accept valid rates and hours within reasonable bounds (0-24 hrs)
-                if hours_row_idx != -1 and rate_row_idx != -1:
-                    for c_idx in range(len(df_ts.columns)):
-                        hrs_cell = df_ts.iloc[hours_row_idx, c_idx]
-                        rate_cell = df_ts.iloc[rate_row_idx, c_idx]
-
-                        try:
-                            hrs_val = float(hrs_cell)
-                            rate_val = float(str(rate_cell).replace("$", "").strip())
-
-                            # Only capture if rate is in our valid hospice map or explicitly 0.73 mileage, and hours are realistic
-                            if 0 < hrs_val <= 24:
-                                if rate_val == 0.73:
-                                    mileage_units_list.append(hrs_val)
-                                elif rate_val in valid_hospice_rates:
-                                    rate_hours_list.append((rate_val, hrs_val))
-                        except:
-                            pass
-
-                for rate, hours in rate_hours_list:
-                    pay_comp = valid_hospice_rates[rate]
+                if total_amount > 0:
                     all_raw_rows.append({
                         "Review": "✅ Validated",
                         "Client ID": 16068715,
-                        "Worker ID": formatted_worker_id,
+                        "Worker ID": matched_worker_id,
                         "Org": "",
                         "Job Number": "",
-                        "Pay Component": pay_comp,
-                        "Rate": rate,
-                        "Rate Number": "",
-                        "Hours": hours,
-                        "Units": "",
-                        "Line Date": "",
-                        "Amount": "",
-                        "Check Seq Number": "",
-                        "Override State": "",
-                        "Override Local": "",
-                        "Override Local Jurisdiction": "",
-                        "Labor Override": labor_override,
-                        "_EmployeeName": display_name,
-                        "_LOB": "Hospice",
-                    })
-
-                total_miles = miles_val + sum(mileage_units_list)
-                if total_miles > 0:
-                    all_raw_rows.append({
-                        "Review": "✅ Validated",
-                        "Client ID": 16068715,
-                        "Worker ID": formatted_worker_id,
-                        "Org": "",
-                        "Job Number": "",
-                        "Pay Component": "MILEAGE REIMB",
-                        "Rate": 0.73,
+                        "Pay Component": "PRN Points",
+                        "Rate": "",
                         "Rate Number": "",
                         "Hours": "",
-                        "Units": total_miles,
+                        "Units": "",
                         "Line Date": "",
-                        "Amount": "",
+                        "Amount": total_amount,
                         "Check Seq Number": "",
                         "Override State": "",
                         "Override Local": "",
                         "Override Local Jurisdiction": "",
-                        "Labor Override": labor_override,
-                        "_EmployeeName": display_name,
+                        "Labor Override": matched_labor_override,
+                        "_EmployeeName": matched_labor_override,
                         "_LOB": "Hospice",
                     })
 
-                if matched_key in prn_points_by_employee:
-                    for prn_row in prn_points_by_employee[matched_key]:
-                        all_raw_rows.append(prn_row)
-
             except Exception as e:
-                st.error(f"Error parsing timesheet {ts_file.name}: {e}")
+                st.error(f"Error processing hospice timesheet {ts_file.name}: {e}")
 
     return aggregate_and_standardize(all_raw_rows)
 
