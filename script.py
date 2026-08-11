@@ -522,11 +522,11 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
     all_reconciled_rows = []
 
-    # Brandy Kendle specific rate mapping from timesheet template layout
+    # Brandy Kendle specific rate mapping with correct spelling: "On call Weekends"
     brandy_rate_component_map = {
         80.00: "Hourly",
         50.00: "On call Weekdays",
-        100.00: "On call Wekends",
+        100.00: "On call Weekends",
         90.00: "Routine Visit",
         45.00: "Hourly",
         185.00: "Start of Care",
@@ -641,7 +641,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                         "kendle" in str(matched_key).lower())
 
             for rate, hours in rate_hours_list:
-                # Determine Pay Component based on employee and rate mapping
                 if is_brandy and rate in brandy_rate_component_map:
                     pay_comp = brandy_rate_component_map[rate]
                 else:
@@ -665,7 +664,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     "Labor Override": labor_override,
                 }
 
-                # Only apply standard 80-hour overtime split if it's general standard hourly component
                 if pay_comp == "Hourly" and total_worker_hours > 80:
                     if accumulated_hours < 80:
                         allowed = 80 - accumulated_hours
@@ -932,10 +930,9 @@ elif current_tab == "Multi-LOB Batch":
                 if batch_hc_file.name.endswith(".csv"):
                     hc_raw = pd.read_csv(batch_hc_file)
                 else:
-                    xls = pd.ExcelFile(batch_hc_file)
-                    hc_raw = pd.read_excel(xls, sheet_name=hc_raw.sheet_names[0] if hasattr(hc_raw,
-                                                                                            'sheet_names') else 0) if 'xls' in locals() else pd.read_excel(
-                        batch_hc_file)
+                    xls_hc = pd.ExcelFile(batch_hc_file)
+                    hc_sheet = xls_hc.sheet_names[0]
+                    hc_raw = pd.read_excel(xls_hc, sheet_name=hc_sheet)
                 hc_processed = process_home_care_payroll(hc_raw)
                 if not hc_processed.empty:
                     hc_processed["LOB"] = "Home Care"
