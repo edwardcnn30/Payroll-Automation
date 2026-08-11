@@ -921,7 +921,7 @@ elif current_tab == "Multi-LOB Batch":
                     res_df = process_home_care_payroll(df)
                     all_batch_rows.append(res_df)
                 except Exception as e:
-                    st.error(f5"Error in {f.name}: {e}")
+                    st.error(f"Error in {f.name}: {e}")
 
         if hospice_batch_files:
             try:
