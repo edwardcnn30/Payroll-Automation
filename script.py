@@ -313,7 +313,6 @@ def aggregate_and_standardize(df_rows):
     existing_sort_cols = [c for c in sort_cols if c in agg_df.columns]
     agg_df = agg_df.sort_values(by=existing_sort_cols)
 
-    # Clean up temporary sort and tracking columns
     drop_cols = [c for c in ["_EmployeeName", "_LOB", "_comp_rank", "_name_sort"] if c in agg_df.columns]
     agg_df = agg_df.drop(columns=drop_cols)
 
@@ -616,7 +615,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
     all_raw_rows = []
 
-    brandy_rate_component_map = {
+    universal_rate_component_map = {
         80.00: "Hourly",
         50.00: "On call Weekdays",
         100.00: "On call Weekends",
@@ -676,6 +675,11 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 if not worker_id:
                     worker_id, matched_key = resolve_worker_id(file_lower)
 
+                # --- KENDLE / BRANDY SAFETY FORCE-MATCH FALLBACK ---
+                if not worker_id and ("kendle" in file_lower or "brandy" in file_lower or "kendle" in ts_employee_name.lower() or "brandy" in ts_employee_name.lower()):
+                    worker_id = 1242
+                    matched_key = "kendle"
+
                 if not worker_id:
                     continue
 
@@ -696,10 +700,12 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     row_vals = [str(df_ts.iloc[r_idx, c]).strip().lower() for c in range(len(df_ts.columns))]
                     row_str = " ".join(row_vals)
 
-                    if "total hrs" in row_str or "total hours" in row_str:
-                        hours_row_idx = r_idx
+                    if "total hrs" in row_str or "total hours" in row_str or "hours" in row_str:
+                        if hours_row_idx == -1:
+                            hours_row_idx = r_idx
                     if "hourly rate" in row_str or "rate" in row_str:
-                        rate_row_idx = r_idx
+                        if rate_row_idx == -1:
+                            rate_row_idx = r_idx
 
                     if "miles" in row_str or "mileage" in row_str:
                         for c_idx, val in enumerate(row_vals):
@@ -734,11 +740,9 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 if not rate_hours_list and not mileage_units_list:
                     rate_hours_list = [(50.0, 40.0)]
 
-                is_brandy = (formatted_worker_id == 1242) or ("brandy" in str(matched_key).lower()) or ("kendle" in str(matched_key).lower())
-
                 for rate, hours in rate_hours_list:
-                    if is_brandy and rate in brandy_rate_component_map:
-                        pay_comp = brandy_rate_component_map[rate]
+                    if rate in universal_rate_component_map:
+                        pay_comp = universal_rate_component_map[rate]
                     else:
                         pay_comp = "Hourly"
 
