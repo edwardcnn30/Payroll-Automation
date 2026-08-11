@@ -692,70 +692,29 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
                 is_brandy = "brandy" in display_name.lower()
 
-                # --- ADVANCED DYNAMIC SUMMARY BLOCK SCANNER ---
+                # --- SECURE RATE & HOURS PARSER WITH STRICT GUARDRAILS ---
                 rate_hours_list = []
                 mileage_units_list = []
 
                 for r_idx in range(len(df_ts)):
                     for c_idx in range(len(df_ts.columns)):
                         cell_val_raw = df_ts.iloc[r_idx, c_idx]
-                        cell_str = str(cell_val_raw).strip().lower()
-
-                        # 1. Scan for Summary Block "Total hrs" / "Total hours" / "Hrs"
-                        if "total hr" in cell_str or cell_str == "hrs":
-                            for sc in range(len(df_ts.columns)):
-                                if sc == c_idx:
-                                    continue
-                                try:
-                                    hrs_val = float(str(df_ts.iloc[r_idx, sc]).replace(",", "").strip())
-                                    if 0 < hrs_val < 1000:
-                                        detected_rate = 0.0
-                                        for offset in [1, 2, 3]:
-                                            if r_idx + offset < len(df_ts):
-                                                try:
-                                                    r_cell = str(df_ts.iloc[r_idx + offset, sc]).replace("$",
-                                                                                                         "").strip()
-                                                    r_val = float(r_cell)
-                                                    if r_val > 0:
-                                                        detected_rate = r_val
-                                                        break
-                                                except:
-                                                    pass
-
-                                        if detected_rate == 0.73:
-                                            mileage_units_list.append(hrs_val)
-                                        elif detected_rate > 0:
-                                            # On call rates strictly for Brandy
-                                            if detected_rate in [50.0, 100.0] and not is_brandy:
-                                                continue
-                                            rate_hours_list.append((detected_rate, hrs_val))
-                                except:
-                                    pass
-
-                        # 2. Check for explicit Mileage / Travel keywords anywhere
-                        if any(m_keyword in cell_str for m_keyword in ["mile", "travel", "reimb"]):
-                            for scan_c in range(max(0, c_idx - 2), min(len(df_ts.columns), c_idx + 3)):
-                                try:
-                                    m_val = float(str(df_ts.iloc[r_idx, scan_c]).replace("$", "").strip())
-                                    if 0 < m_val < 500 and m_val != 0.73:
-                                        mileage_units_list.append(m_val)
-                                except:
-                                    pass
-
-                        # 3. Fallback scan for standalone standard rates
                         try:
                             val_num = float(str(cell_val_raw).replace("$", "").strip())
                             if val_num in [80.0, 45.0, 50.0, 100.0, 90.0, 185.0, 26.0, 28.0, 30.0] or val_num == 0.73:
                                 if val_num in [50.0, 100.0] and not is_brandy:
                                     continue
-                                for nc in range(max(0, c_idx - 3), min(len(df_ts.columns), c_idx + 4)):
+
+                                for nc in range(max(0, c_idx - 2), min(len(df_ts.columns), c_idx + 3)):
                                     if nc == c_idx:
                                         continue
                                     try:
                                         nbr_val = float(str(df_ts.iloc[r_idx, nc]).replace("$", "").strip())
-                                        if 0 < nbr_val <= 500:
+                                        # Strict guardrail: Prevent picking up large ID or footer totals as hours
+                                        if 0 < nbr_val <= 80.0:
                                             if val_num == 0.73:
-                                                mileage_units_list.append(nbr_val)
+                                                if nbr_val < 500:
+                                                    mileage_units_list.append(nbr_val)
                                             else:
                                                 pair = (val_num, nbr_val)
                                                 if pair not in rate_hours_list:
