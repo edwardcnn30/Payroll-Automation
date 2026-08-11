@@ -689,46 +689,41 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 display_name = matched_name if matched_name else clean_file_name
                 labor_override = display_name
 
-                # --- UNIVERSAL STRICT VERTICAL COLUMN-BASED PARSER ---
+                # --- STRICT ADJACENT/ONE-ROW VERTICAL COLUMN-BASED PARSER ---
                 rate_hours_list = []
                 mileage_units_list = []
 
                 for c_idx in range(len(df_ts.columns)):
-                    col_rates = []
-                    col_hours = []
-
+                    col_data = []
                     for r_idx in range(len(df_ts)):
                         cell_val = df_ts.iloc[r_idx, c_idx]
                         if pd.notnull(cell_val):
                             cell_str = str(cell_val).replace("$", "").strip()
                             try:
                                 val_num = float(cell_str)
-                                # Accept all standard rates across all workers universally
-                                if val_num in [80.0, 45.0, 50.0, 100.0, 90.0, 185.0, 26.0, 28.0, 30.0,
-                                               10.0] or val_num == 0.73:
-                                    col_rates.append((r_idx, val_num))
-                                elif 0 < val_num <= 200.0:
-                                    col_hours.append((r_idx, val_num))
+                                col_data.append((r_idx, val_num))
                             except:
                                 pass
 
-                    for r_rate, rate_val in col_rates:
-                        best_hr = None
-                        min_dist = 999
-                        for r_hr, hr_val in col_hours:
-                            dist = abs(r_hr - r_rate)
-                            if dist < min_dist and dist <= 3:
-                                min_dist = dist
-                                best_hr = hr_val
+                    # Look for rate and hours positioned right next to each other (same row or exactly 1 row apart)
+                    for i, (r_rate, val_rate) in enumerate(col_data):
+                        if val_rate in [80.0, 45.0, 50.0, 100.0, 90.0, 185.0, 26.0, 28.0, 30.0,
+                                        10.0] or val_rate == 0.73:
+                            best_hr = None
+                            for r_hr, val_hr in col_data:
+                                if 0 < val_hr <= 200.0 and abs(r_hr - r_rate) <= 1:
+                                    if val_hr not in [80.0, 45.0, 50.0, 100.0, 90.0, 185.0, 26.0, 28.0, 30.0, 10.0]:
+                                        best_hr = val_hr
+                                        break
 
-                        if best_hr is not None:
-                            if rate_val == 0.73:
-                                if best_hr < 500:
-                                    mileage_units_list.append(best_hr)
-                            else:
-                                pair = (rate_val, best_hr)
-                                if pair not in rate_hours_list:
-                                    rate_hours_list.append(pair)
+                            if best_hr is not None:
+                                if val_rate == 0.73:
+                                    if best_hr < 500:
+                                        mileage_units_list.append(best_hr)
+                                else:
+                                    pair = (val_rate, best_hr)
+                                    if pair not in rate_hours_list:
+                                        rate_hours_list.append(pair)
 
                 accumulated_hospice_hours = 0.0
                 for rate, hours in rate_hours_list:
