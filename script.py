@@ -270,27 +270,37 @@ def aggregate_and_standardize(df_rows):
     agg_df["Units"] = agg_df["Units"].apply(lambda x: x if x > 0 else "")
     agg_df["Amount"] = agg_df["Amount"].apply(lambda x: x if x > 0 else "")
 
-    # --- UPDATED PAY COMPONENT & HIERARCHY SORTING RULES ---
-    # 1. PRN Points (Rank 1)
-    # 2. Hourly for Home Health and Hospice (Rank 2)
-    # 3. Hourly for Home Care (Rank 3)
-    # 4. Overtime / Other components (Rank 4/5)
-    # 5. MILEAGE REIMB (Rank 6)
+    # --- EXACT REQUESTED PAY COMPONENT HIERARCHY SORTING RULES ---
     def assign_comp_rank(row):
         comp = str(row.get("Pay Component", ""))
         lob = str(row.get("_LOB", ""))
+
+        # 1. PRN Points - Home Health and Hospice
         if comp == "PRN Points":
             return 1
-        elif comp == "Hourly" and lob in ["Home Health", "Hospice"]:
+        # 2. Dedicated Pay for Kendle (On call Weekdays, On call Weekends, Routine Visit, Start of Care)
+        elif comp in ["On call Weekdays", "On call Weekends", "Routine Visit", "Start of Care"]:
             return 2
-        elif comp == "Hourly" and lob == "Home Care":
+        # 3. Hourly - Home Health
+        elif comp == "Hourly" and lob == "Home Health":
             return 3
-        elif comp == "Overtime":
+        # 4. MILEAGE REIMB - Home Health and Hospice
+        elif comp == "MILEAGE REIMB" and lob in ["Home Health", "Hospice"]:
             return 4
-        elif comp == "MILEAGE REIMB":
-            return 6
-        else:
+        # 5. Overtime - Hospice and Home Health
+        elif comp == "Overtime" and lob in ["Hospice", "Home Health"]:
             return 5
+        # 6. Hourly - Home Care
+        elif comp == "Hourly" and lob == "Home Care":
+            return 6
+        # 7. Overtime - Home Care
+        elif comp == "Overtime" and lob == "Home Care":
+            return 7
+        # 8. MILEAGE REIMB - Home Care
+        elif comp == "MILEAGE REIMB" and lob == "Home Care":
+            return 8
+        else:
+            return 9
 
     agg_df["_comp_rank"] = agg_df.apply(assign_comp_rank, axis=1)
 
