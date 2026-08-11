@@ -270,34 +270,41 @@ def aggregate_and_standardize(df_rows):
     agg_df["Units"] = agg_df["Units"].apply(lambda x: x if x > 0 else "")
     agg_df["Amount"] = agg_df["Amount"].apply(lambda x: x if x > 0 else "")
 
-    # --- HIERARCHY SORTING RULES ---
-    # 1. LOB Hierarchy: Hospice, Home Health, Home Care
-    lob_rank = {"Hospice": 1, "Home Health": 2, "Home Care": 3}
-    if "_LOB" in agg_df.columns:
-        agg_df["_lob_sort"] = agg_df["_LOB"].map(lob_rank).fillna(99)
-    else:
-        agg_df["_lob_sort"] = 99
+    # --- UPDATED PAY COMPONENT & HIERARCHY SORTING RULES ---
+    # 1. PRN Points (Rank 1)
+    # 2. Hourly for Home Health and Hospice (Rank 2)
+    # 3. Hourly for Home Care (Rank 3)
+    # 4. Overtime / Other components (Rank 4/5)
+    # 5. MILEAGE REIMB (Rank 6)
+    def assign_comp_rank(row):
+        comp = str(row.get("Pay Component", ""))
+        lob = str(row.get("_LOB", ""))
+        if comp == "PRN Points":
+            return 1
+        elif comp == "Hourly" and lob in ["Home Health", "Hospice"]:
+            return 2
+        elif comp == "Hourly" and lob == "Home Care":
+            return 3
+        elif comp == "Overtime":
+            return 4
+        elif comp == "MILEAGE REIMB":
+            return 6
+        else:
+            return 5
 
-    # 2. Alphabetical Employee sorting
+    agg_df["_comp_rank"] = agg_df.apply(assign_comp_rank, axis=1)
+
     if "_EmployeeName" in agg_df.columns:
         agg_df["_name_sort"] = agg_df["_EmployeeName"].astype(str).str.lower()
     else:
         agg_df["_name_sort"] = agg_df["Labor Override"].astype(str).str.lower()
 
-    # 3. Pay Component Hierarchy: PRN Points, Hourly, MILEAGE REIMB, then others
-    comp_rank = {
-        "PRN Points": 1,
-        "Hourly": 2,
-        "MILEAGE REIMB": 3
-    }
-    agg_df["_comp_sort"] = agg_df["Pay Component"].map(comp_rank).fillna(4)
-
-    sort_cols = ["_lob_sort", "_name_sort", "_comp_sort", "Rate"]
+    sort_cols = ["_comp_rank", "_name_sort", "Rate"]
     existing_sort_cols = [c for c in sort_cols if c in agg_df.columns]
     agg_df = agg_df.sort_values(by=existing_sort_cols)
 
     # Clean up temporary sort and tracking columns
-    drop_cols = [c for c in ["_EmployeeName", "_LOB", "_lob_sort", "_name_sort", "_comp_sort"] if c in agg_df.columns]
+    drop_cols = [c for c in ["_EmployeeName", "_LOB", "_comp_rank", "_name_sort"] if c in agg_df.columns]
     agg_df = agg_df.drop(columns=drop_cols)
 
     for col in PAYCHEX_TEMPLATE_COLUMNS:
