@@ -623,22 +623,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
     all_raw_rows = []
 
-    general_hospice_rates = {
-        80.00: "Hourly",
-        45.00: "Hourly",
-        90.00: "Routine Visit",
-        185.00: "Start of Care",
-    }
-
-    brandy_hospice_rates = {
-        80.00: "Hourly",
-        50.00: "On call Weekdays",
-        100.00: "On call Weekends",
-        90.00: "Routine Visit",
-        45.00: "Hourly",
-        185.00: "Start of Care",
-    }
-
     if timesheet_files:
         for ts_file in timesheet_files:
             try:
@@ -699,10 +683,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 display_name = matched_name if matched_name else clean_file_name
                 labor_override = display_name
 
-                is_brandy = "brandy" in display_name.lower()
-                active_rate_dict = brandy_hospice_rates if is_brandy else general_hospice_rates
-
-                # --- ADVANCED DUAL-PASS MATRIX SCANNER FOR HOSPICE TOTALS ---
+                # --- ADVANCED DYNAMIC SUMMARY BLOCK SCANNER ---
                 rate_hours_list = []
                 mileage_units_list = []
 
@@ -711,7 +692,41 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                         cell_val_raw = df_ts.iloc[r_idx, c_idx]
                         cell_str = str(cell_val_raw).strip().lower()
 
-                        # Check for Mileage / Miles totals explicitly anywhere in sheet
+                        # 1. Scan for Summary Block "Total hrs" / "Total hours" / "Hrs"
+                        if "total hr" in cell_str or cell_str == "hrs":
+                            for sc in range(len(df_ts.columns)):
+                                if sc == c_idx:
+                                    continue
+                                try:
+                                    hrs_val = float(str(df_ts.iloc[r_idx, sc]).replace(",", "").strip())
+                                    if 0 < hrs_val < 1000:
+                                        # Look down in the same column sc for the matching rate (e.g. "Hourly rate" row)
+                                        detected_rate = 0.0
+                                        for offset in [1, 2, 3]:
+                                            if r_idx + offset < len(df_ts):
+                                                try:
+                                                    r_cell = str(df_ts.iloc[r_idx + offset, sc]).replace("$",
+                                                                                                         "").strip()
+                                                    r_val = float(r_cell)
+                                                    if r_val > 0:
+                                                        detected_rate = r_val
+                                                        break
+                                                except:
+                                                    pass
+
+                                        if detected_rate == 0.73:
+                                            mileage_units_list.append(hrs_val)
+                                        elif detected_rate > 0:
+                                            pay_comp = "Hourly"
+                                            if detected_rate == 50.0:
+                                                pay_comp = "On call Weekdays"
+                                            elif detected_rate == 100.0:
+                                                pay_comp = "On call Weekends"
+                                            rate_hours_list.append((detected_rate, hrs_val))
+                                except:
+                                    pass
+
+                        # 2. Check for explicit Mileage / Travel keywords anywhere
                         if any(m_keyword in cell_str for m_keyword in ["mile", "travel", "reimb"]):
                             for scan_c in range(max(0, c_idx - 2), min(len(df_ts.columns), c_idx + 3)):
                                 try:
@@ -721,17 +736,16 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                                 except:
                                     pass
 
-                        # Scan for explicit rate and hours pairings in summary blocks or line entries
+                        # 3. Fallback scan for standalone standard rates
                         try:
                             val_num = float(str(cell_val_raw).replace("$", "").strip())
-                            if val_num in active_rate_dict or val_num == 0.73:
-                                # Look around neighboring cells for corresponding hours or quantities
+                            if val_num in [80.0, 45.0, 50.0, 100.0, 90.0, 185.0, 26.0, 28.0, 30.0] or val_num == 0.73:
                                 for nc in range(max(0, c_idx - 3), min(len(df_ts.columns), c_idx + 4)):
                                     if nc == c_idx:
                                         continue
                                     try:
                                         nbr_val = float(str(df_ts.iloc[r_idx, nc]).replace("$", "").strip())
-                                        if 0 < nbr_val <= 200:
+                                        if 0 < nbr_val <= 500:
                                             if val_num == 0.73:
                                                 mileage_units_list.append(nbr_val)
                                             else:
@@ -744,7 +758,16 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                             pass
 
                 for rate, hours in rate_hours_list:
-                    pay_comp = active_rate_dict[rate]
+                    pay_comp = "Hourly"
+                    if rate == 50.0:
+                        pay_comp = "On call Weekdays"
+                    elif rate == 100.0:
+                        pay_comp = "On call Weekends"
+                    elif rate == 90.0:
+                        pay_comp = "Routine Visit"
+                    elif rate == 185.0:
+                        pay_comp = "Start of Care"
+
                     all_raw_rows.append({
                         "Review": "✅ Validated",
                         "Client ID": 16068715,
