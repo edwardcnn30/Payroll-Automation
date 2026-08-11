@@ -11,7 +11,6 @@ st.set_page_config(
 )
 
 # --- DYNAMIC CREDENTIALS & AUTHENTICATOR SETUP ---
-# Generate a secure bcrypt hash for password '123' dynamically to prevent version errors
 hashed_password = bcrypt.hashpw("123".encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 credentials = {
@@ -44,7 +43,6 @@ elif st.session_state["authentication_status"] is None:
 
 # --- IF LOGGED IN, PROCEED WITH FULL APP ---
 
-# Secure Logout Button in Sidebar & Welcome Header
 with st.sidebar:
     st.markdown(f"Welcome back, **{st.session_state['name']}**! 👋")
     st.markdown("---")
@@ -524,6 +522,17 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
     all_reconciled_rows = []
 
+    # Brandy Kendle specific rate mapping from timesheet template layout
+    brandy_rate_component_map = {
+        80.00: "Hourly",
+        50.00: "On call Weekdays",
+        100.00: "On call Wekends",
+        90.00: "Routine Visit",
+        45.00: "Hourly",
+        185.00: "Start of Care",
+        10.00: "Hourly"
+    }
+
     for ts_file in timesheet_files:
         try:
             xls = pd.ExcelFile(ts_file)
@@ -628,14 +637,23 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                                                                                                      1).isdigit() else worker_id
             labor_override = f"{display_name} - {formatted_worker_id} ({formatted_worker_id})" if formatted_worker_id else display_name
 
+            is_brandy = (formatted_worker_id == 1242) or ("brandy" in str(matched_key).lower()) or (
+                        "kendle" in str(matched_key).lower())
+
             for rate, hours in rate_hours_list:
+                # Determine Pay Component based on employee and rate mapping
+                if is_brandy and rate in brandy_rate_component_map:
+                    pay_comp = brandy_rate_component_map[rate]
+                else:
+                    pay_comp = "Hourly"
+
                 base_item = {
                     "Review": "✅ Validated",
                     "Client ID": 16068715,
                     "Worker ID": formatted_worker_id,
                     "Org": "",
                     "Job Num": "",
-                    "Pay Component": "Hourly",
+                    "Pay Component": pay_comp,
                     "Rate": rate,
                     "Hours": hours,
                     "Units": "",
@@ -647,7 +665,8 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     "Labor Override": labor_override,
                 }
 
-                if total_worker_hours > 80:
+                # Only apply standard 80-hour overtime split if it's general standard hourly component
+                if pay_comp == "Hourly" and total_worker_hours > 80:
                     if accumulated_hours < 80:
                         allowed = 80 - accumulated_hours
                         if hours <= allowed:
@@ -861,7 +880,7 @@ elif current_tab == "Upload Data":
 elif current_tab == "Multi-LOB Batch":
     st.markdown("### ⚡ Enterprise Multi-LOB Batch Processing Pipeline")
     st.write(
-        "Upload all departmental files simultaneously. Hospice reconciliation will filter out duplicate hourly entries from the Home Health master file while **retaining PRN Points (such as MSW task amounts for Maggie Simowski and others)**.")
+        "Upload all departmental files simultaneously. Hospice reconciliation will filter out duplicate hourly entries from the Home Health master file while **retaining PRN Points**.")
 
     col_b1, col_b2, col_b3 = st.columns(3)
     with col_b1:
@@ -914,7 +933,9 @@ elif current_tab == "Multi-LOB Batch":
                     hc_raw = pd.read_csv(batch_hc_file)
                 else:
                     xls = pd.ExcelFile(batch_hc_file)
-                    hc_raw = pd.read_excel(xls, sheet_name=xls.sheet_names[0])
+                    hc_raw = pd.read_excel(xls, sheet_name=hc_raw.sheet_names[0] if hasattr(hc_raw,
+                                                                                            'sheet_names') else 0) if 'xls' in locals() else pd.read_excel(
+                        batch_hc_file)
                 hc_processed = process_home_care_payroll(hc_raw)
                 if not hc_processed.empty:
                     hc_processed["LOB"] = "Home Care"
@@ -926,7 +947,7 @@ elif current_tab == "Multi-LOB Batch":
                 st.session_state.processed_df = final_batch_df
 
                 st.success(
-                    "Enterprise batch processing completed successfully with PRN Points and Hospice reconciliation fully aligned!")
+                    "Enterprise batch processing completed successfully with Brandy Kendle's rate-to-component mappings and reconciliation fully aligned!")
 
                 st.markdown("### 🔍 Consolidated Batch Output Preview")
                 st.dataframe(final_batch_df, use_container_width=True)
@@ -1024,5 +1045,6 @@ elif current_tab == "Developer Support":
         "Overtime Policy": "80-hour threshold weekly standard split",
         "Mileage Rate": "0.73 Standard IRS/Client Reimb",
         "Supported LOBs": ["Home Health", "Home Care", "Hospice Reconciliation"],
+        "Custom Rules": ["Brandy Kendle (ID 1242) Rate-to-Component Mapping"],
         "Active Session": st.session_state.get("name", "Unknown")
     })
