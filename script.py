@@ -297,8 +297,6 @@ def process_home_health_payroll(df):
         df["Mileage"] = 0.0
 
     raw_rows = []
-
-    # Group by employee to properly aggregate total hours for the 80-hour overtime threshold
     grouped = df.groupby([id_col, df[name_col].astype(str)], dropna=False)
 
     for (emp_id_raw, emp_name), group in grouped:
@@ -356,7 +354,6 @@ def process_home_health_payroll(df):
                         "_LOB": "Home Health",
                     })
 
-        # Apply 80-hour overtime threshold across total accumulated employee hours
         if emp_id in hourly_rates and total_employee_hours > 0:
             base_item = {
                 "Review": "✅ Validated",
@@ -394,11 +391,9 @@ def process_home_health_payroll(df):
                 reg_item["Hours"] = total_employee_hours
                 raw_rows.append(reg_item)
 
-        # Append PRN rows
         for prn_r in prn_rows_for_emp:
             raw_rows.append(prn_r)
 
-        # Append Mileage if present
         if total_employee_mileage > 0:
             raw_rows.append({
                 "Review": "✅ Validated",
@@ -622,14 +617,14 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
     all_raw_rows = []
 
-    universal_rate_component_map = {
+    # STRICT VALID HOSPICE RATES ONLY
+    valid_hospice_rates = {
         80.00: "Hourly",
         50.00: "On call Weekdays",
         100.00: "On call Weekends",
         90.00: "Routine Visit",
         45.00: "Hourly",
         185.00: "Start of Care",
-        10.00: "Hourly"
     }
 
     if timesheet_files:
@@ -722,7 +717,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                                 continue
                             try:
                                 f_val = float(df_ts.iloc[r_idx, c_idx])
-                                if 0 < f_val < 500:
+                                if 0 < f_val < 300:  # Restrict mileage to realistic bounds per timesheet
                                     miles_val = max(miles_val, f_val)
                             except:
                                 pass
@@ -730,6 +725,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 rate_hours_list = []
                 mileage_units_list = []
 
+                # STRICT PARSING: Only accept valid rates and hours within reasonable bounds (0-24 hrs)
                 if hours_row_idx != -1 and rate_row_idx != -1:
                     for c_idx in range(len(df_ts.columns)):
                         hrs_cell = df_ts.iloc[hours_row_idx, c_idx]
@@ -738,23 +734,18 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                         try:
                             hrs_val = float(hrs_cell)
                             rate_val = float(str(rate_cell).replace("$", "").strip())
-                            if hrs_val > 0 and rate_val > 0:
+
+                            # Only capture if rate is in our valid hospice map or explicitly 0.73 mileage, and hours are realistic
+                            if 0 < hrs_val <= 24:
                                 if rate_val == 0.73:
                                     mileage_units_list.append(hrs_val)
-                                else:
+                                elif rate_val in valid_hospice_rates:
                                     rate_hours_list.append((rate_val, hrs_val))
                         except:
                             pass
 
-                if not rate_hours_list and not mileage_units_list:
-                    rate_hours_list = [(50.0, 40.0)]
-
                 for rate, hours in rate_hours_list:
-                    if rate in universal_rate_component_map:
-                        pay_comp = universal_rate_component_map[rate]
-                    else:
-                        pay_comp = "Hourly"
-
+                    pay_comp = valid_hospice_rates[rate]
                     all_raw_rows.append({
                         "Review": "✅ Validated",
                         "Client ID": 16068715,
