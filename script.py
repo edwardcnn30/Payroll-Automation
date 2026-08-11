@@ -204,6 +204,23 @@ PAYCHEX_TEMPLATE_COLUMNS = [
 ]
 
 
+# --- HELPER: ENSURE UNIQUE COLUMN NAMES ---
+def sanitize_columns(df):
+    df.columns = [str(c).strip() for c in df.columns]
+    seen = {}
+    new_cols = []
+    for c in df.columns:
+        c_str = str(c).strip()
+        if c_str in seen:
+            seen[c_str] += 1
+            new_cols.append(f"{c_str}_{seen[c_str]}")
+        else:
+            seen[c_str] = 0
+            new_cols.append(c_str)
+    df.columns = new_cols
+    return df
+
+
 # --- HELPER: NORMALIZE & AGGREGATE DATAFRAME ---
 def aggregate_and_standardize(df_rows):
     if not df_rows:
@@ -267,10 +284,8 @@ def aggregate_and_standardize(df_rows):
 # --- CORE PAYPROCESSING ENGINES ---
 
 def process_home_health_payroll(df):
-    df.columns = [str(c).strip() for c in df.columns]
+    df = sanitize_columns(df)
 
-    # Column D (index 3) = Employee Name -> Labor Override
-    # Column E (index 4) = Employee ID -> Worker ID
     name_col = df.columns[3] if len(df.columns) > 3 else df.columns[0]
     id_col = df.columns[4] if len(df.columns) > 4 else (df.columns[1] if len(df.columns) > 1 else df.columns[0])
 
@@ -368,14 +383,10 @@ def process_home_health_payroll(df):
 
 
 def process_home_care_payroll(df):
-    df.columns = [str(c).strip() for c in df.columns]
+    df = sanitize_columns(df)
 
-    # Column D (index 3) = Employee Name -> Labor Override
-    # Column E (index 4) = Employee ID -> Worker ID
     id_col = df.columns[4] if len(df.columns) > 4 else (df.columns[1] if len(df.columns) > 1 else df.columns[0])
     name_col = df.columns[3] if len(df.columns) > 3 else df.columns[0]
-
-    df = df.rename(columns={id_col: "Worker ID", name_col: "Employee"})
 
     if "Hours" not in df.columns:
         df["Hours"] = 0.0
@@ -388,7 +399,7 @@ def process_home_care_payroll(df):
     df["Rate"] = pd.to_numeric(df["Rate"], errors="coerce").fillna(0)
 
     raw_rows = []
-    grouped = df.groupby(["Worker ID", df["Employee"].astype(str)], dropna=False)
+    grouped = df.groupby([id_col, df[name_col].astype(str)], dropna=False)
 
     for (worker_id, emp_name), group in grouped:
         accumulated_hours = 0.0
@@ -501,7 +512,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
     name_mapping = {}
     prn_points_by_employee = {}
 
-    # 1. Parse Raw File (Master): map names (Col D) to IDs (Col E), and extract dedicated PRN Points
     if hh_file is not None:
         try:
             df_raw = pd.read_excel(hh_file, header=None) if not hasattr(hh_file, "name") or not hh_file.name.endswith(".csv") else pd.read_csv(hh_file, header=None)
@@ -513,9 +523,8 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     break
 
             hh_df = pd.read_csv(hh_file, skiprows=header_row_idx) if hasattr(hh_file, "name") and hh_file.name.endswith(".csv") else pd.read_excel(hh_file, header=header_row_idx)
-            hh_df.columns = [str(c).strip() for c in hh_df.columns]
+            hh_df = sanitize_columns(hh_df)
 
-            # Column D (index 3) = Employee Name, Column E (index 4) = Employee ID
             name_col = hh_df.columns[3] if len(hh_df.columns) > 3 else hh_df.columns[0]
             id_col = hh_df.columns[4] if len(hh_df.columns) > 4 else hh_df.columns[1]
 
@@ -527,7 +536,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     id_mapping[emp_name] = emp_id
                     name_mapping[emp_id] = str(emp_name_raw).strip()
 
-                # Check for PRN Points or amount entries in raw file to retain
                 amount_val = float(row.get("Amount", 0)) if pd.notnull(row.get("Amount")) and str(row.get("Amount")).replace(".", "", 1).isdigit() else 0.0
                 if amount_val > 0 and emp_name:
                     if emp_name not in prn_points_by_employee:
@@ -567,7 +575,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
         10.00: "Hourly"
     }
 
-    # 2. Process timesheets (CATCH ONLY THOSE FROM TIMESHEETS, replacing raw hourly data while keeping timesheet data + PRN points)
     for ts_file in timesheet_files:
         try:
             xls = pd.ExcelFile(ts_file)
@@ -677,7 +684,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
             is_brandy = (formatted_worker_id == 1242) or ("brandy" in str(matched_key).lower()) or ("kendle" in str(matched_key).lower())
 
-            # Append Timesheet Data (replacing raw hourly data)
             for rate, hours in rate_hours_list:
                 if is_brandy and rate in brandy_rate_component_map:
                     pay_comp = brandy_rate_component_map[rate]
@@ -728,7 +734,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     "_EmployeeName": display_name,
                 })
 
-            # Append dedicated PRN Points from the master raw file for this matching name if available
             if matched_key in prn_points_by_employee:
                 for prn_row in prn_points_by_employee[matched_key]:
                     all_raw_rows.append(prn_row)
