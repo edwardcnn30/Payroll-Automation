@@ -297,80 +297,130 @@ def process_home_health_payroll(df):
         df["Mileage"] = 0.0
 
     raw_rows = []
-    for _, row in df.iterrows():
+
+    # Group by employee to properly aggregate total hours for the 80-hour overtime threshold
+    grouped = df.groupby([id_col, df[name_col].astype(str)], dropna=False)
+
+    for (emp_id_raw, emp_name), group in grouped:
         try:
-            emp_id_raw = row.get(id_col)
             emp_id = float(emp_id_raw) if pd.notnull(emp_id_raw) and str(emp_id_raw).replace(".", "",
                                                                                              1).isdigit() else emp_id_raw
         except:
-            emp_id = row.get(id_col, "")
-
-        emp_name = str(row.get(name_col, ""))
-        hours = float(row.get(hours_col, 0)) if pd.notnull(row.get(hours_col)) else 0.0
-        mileage = float(row.get("Mileage", 0)) if pd.notnull(row.get("Mileage")) else 0.0
-
-        if emp_id in hourly_rates:
-            rate = hourly_rates[emp_id]
-            amount = 0.0
-            pay_type = "Hourly"
-        else:
-            rate = float(row.get("Rate", 0)) if pd.notnull(row.get("Rate")) and str(row.get("Rate")).replace(".", "",
-                                                                                                             1).isdigit() else 0.0
-            amount = float(row.get("Amount", 0)) if pd.notnull(row.get("Amount")) and str(row.get("Amount")).replace(
-                ".", "", 1).isdigit() else 0.0
-            pay_type = "PRN Points"
+            emp_id = emp_id_raw
 
         formatted_worker_id = int(emp_id) if isinstance(emp_id, float) and emp_id.is_integer() else emp_id
         labor_override = str(emp_name).strip() if emp_name and str(emp_name).lower() != "nan" else str(
             formatted_worker_id)
 
-        base_item = {
-            "Review": "✅ Validated",
-            "Client ID": 16068715,
-            "Worker ID": formatted_worker_id,
-            "Org": "",
-            "Job Number": "",
-            "Pay Component": pay_type,
-            "Rate": rate if pay_type == "Hourly" and rate > 0 else "",
-            "Rate Number": "",
-            "Hours": hours if pay_type == "Hourly" and hours > 0 else "",
-            "Units": "",
-            "Line Date": "",
-            "Amount": amount if pay_type == "PRN Points" and amount > 0 else "",
-            "Check Seq Number": "",
-            "Override State": "",
-            "Override Local": "",
-            "Override Local Jurisdiction": "",
-            "Labor Override": labor_override,
-            "_EmployeeName": emp_name,
-            "_LOB": "Home Health",
-        }
+        total_employee_hours = 0.0
+        total_employee_mileage = 0.0
+        prn_rows_for_emp = []
+        applied_rate = 0.0
 
-        if pay_type == "Hourly":
-            if hours > 80:
+        for _, row in group.iterrows():
+            hours = float(row.get(hours_col, 0)) if pd.notnull(row.get(hours_col)) and str(row.get(hours_col)).replace(
+                ".", "", 1).isdigit() else 0.0
+            mileage = float(row.get("Mileage", 0)) if pd.notnull(row.get("Mileage")) and str(
+                row.get("Mileage")).replace(".", "", 1).isdigit() else 0.0
+            total_employee_mileage += mileage
+
+            if emp_id in hourly_rates:
+                applied_rate = hourly_rates[emp_id]
+                total_employee_hours += hours
+            else:
+                rate = float(row.get("Rate", 0)) if pd.notnull(row.get("Rate")) and str(row.get("Rate")).replace(".",
+                                                                                                                 "",
+                                                                                                                 1).isdigit() else 0.0
+                amount = float(row.get("Amount", 0)) if pd.notnull(row.get("Amount")) and str(
+                    row.get("Amount")).replace(".", "", 1).isdigit() else 0.0
+                if amount > 0 or rate > 0:
+                    prn_rows_for_emp.append({
+                        "Review": "✅ Validated",
+                        "Client ID": 16068715,
+                        "Worker ID": formatted_worker_id,
+                        "Org": "",
+                        "Job Number": "",
+                        "Pay Component": "PRN Points",
+                        "Rate": "",
+                        "Rate Number": "",
+                        "Hours": "",
+                        "Units": "",
+                        "Line Date": "",
+                        "Amount": amount,
+                        "Check Seq Number": "",
+                        "Override State": "",
+                        "Override Local": "",
+                        "Override Local Jurisdiction": "",
+                        "Labor Override": labor_override,
+                        "_EmployeeName": emp_name,
+                        "_LOB": "Home Health",
+                    })
+
+        # Apply 80-hour overtime threshold across total accumulated employee hours
+        if emp_id in hourly_rates and total_employee_hours > 0:
+            base_item = {
+                "Review": "✅ Validated",
+                "Client ID": 16068715,
+                "Worker ID": formatted_worker_id,
+                "Org": "",
+                "Job Number": "",
+                "Pay Component": "Hourly",
+                "Rate": applied_rate,
+                "Rate Number": "",
+                "Hours": 0.0,
+                "Units": "",
+                "Line Date": "",
+                "Amount": "",
+                "Check Seq Number": "",
+                "Override State": "",
+                "Override Local": "",
+                "Override Local Jurisdiction": "",
+                "Labor Override": labor_override,
+                "_EmployeeName": emp_name,
+                "_LOB": "Home Health",
+            }
+
+            if total_employee_hours > 80:
                 reg_item = base_item.copy()
                 reg_item["Hours"] = 80.0
                 raw_rows.append(reg_item)
 
                 ot_item = base_item.copy()
                 ot_item["Pay Component"] = "Overtime"
-                ot_item["Hours"] = hours - 80.0
+                ot_item["Hours"] = total_employee_hours - 80.0
                 raw_rows.append(ot_item)
             else:
-                if hours > 0:
-                    raw_rows.append(base_item)
-        else:
-            if amount > 0:
-                raw_rows.append(base_item)
+                reg_item = base_item.copy()
+                reg_item["Hours"] = total_employee_hours
+                raw_rows.append(reg_item)
 
-        if mileage > 0:
-            m_item = base_item.copy()
-            m_item["Pay Component"] = "MILEAGE REIMB"
-            m_item["Rate"] = 0.73
-            m_item["Hours"] = ""
-            m_item["Units"] = mileage
-            m_item["Amount"] = ""
-            raw_rows.append(m_item)
+        # Append PRN rows
+        for prn_r in prn_rows_for_emp:
+            raw_rows.append(prn_r)
+
+        # Append Mileage if present
+        if total_employee_mileage > 0:
+            raw_rows.append({
+                "Review": "✅ Validated",
+                "Client ID": 16068715,
+                "Worker ID": formatted_worker_id,
+                "Org": "",
+                "Job Number": "",
+                "Pay Component": "MILEAGE REIMB",
+                "Rate": 0.73,
+                "Rate Number": "",
+                "Hours": "",
+                "Units": total_employee_mileage,
+                "Line Date": "",
+                "Amount": "",
+                "Check Seq Number": "",
+                "Override State": "",
+                "Override Local": "",
+                "Override Local Jurisdiction": "",
+                "Labor Override": labor_override,
+                "_EmployeeName": emp_name,
+                "_LOB": "Home Health",
+            })
 
     return aggregate_and_standardize(raw_rows)
 
