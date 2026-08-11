@@ -220,7 +220,6 @@ def aggregate_and_standardize(df_rows):
     temp_df["Units"] = pd.to_numeric(temp_df["Units"], errors="coerce").fillna(0)
     temp_df["Amount"] = pd.to_numeric(temp_df["Amount"], errors="coerce").fillna(0)
 
-    # Group by key fields to sum up metrics per employee and pay component/rate
     group_cols = [
         "Review",
         "Client ID",
@@ -238,7 +237,6 @@ def aggregate_and_standardize(df_rows):
         "Labor Override",
     ]
 
-    # Keep track of employee names for sorting
     if "_EmployeeName" in temp_df.columns:
         group_cols.append("_EmployeeName")
 
@@ -250,7 +248,6 @@ def aggregate_and_standardize(df_rows):
         .reset_index()
     )
 
-    # Clean up zero-sums where appropriate or convert back blanks if needed
     agg_df["Hours"] = agg_df["Hours"].apply(lambda x: x if x > 0 else "")
     agg_df["Units"] = agg_df["Units"].apply(lambda x: x if x > 0 else "")
     agg_df["Amount"] = agg_df["Amount"].apply(lambda x: x if x > 0 else "")
@@ -273,15 +270,11 @@ def aggregate_and_standardize(df_rows):
 def process_home_health_payroll(df):
     df.columns = [str(c).strip() for c in df.columns]
 
-    # Find ID column dynamically
-    id_col = next(
-        (c for c in df.columns if "id" in c.lower() or "emp" in c.lower() or "worker" in c.lower()),
-        df.columns[0],
-    )
-    name_col = next(
-        (c for c in df.columns if "name" in c.lower() or "employee" in c.lower() or "worker" in c.lower()),
-        df.columns[1] if len(df.columns) > 1 else df.columns[0],
-    )
+    # Column D (index 3) is Employee Name -> Labor Override
+    # Column E (index 4) is Employee ID -> Worker ID
+    name_col = df.columns[3] if len(df.columns) > 3 else df.columns[0]
+    id_col = df.columns[4] if len(df.columns) > 4 else (df.columns[1] if len(df.columns) > 1 else df.columns[0])
+
     hours_col = next(
         (c for c in df.columns if "hour" in c.lower()), "Hours" if "Hours" in df.columns else df.columns[-1]
     )
@@ -323,7 +316,7 @@ def process_home_health_payroll(df):
             pay_type = "PRN Points"
 
         formatted_worker_id = int(emp_id) if isinstance(emp_id, float) and emp_id.is_integer() else emp_id
-        labor_override = f"{emp_name} - {formatted_worker_id} ({formatted_worker_id})" if emp_name and emp_name.lower() != "nan" else str(formatted_worker_id)
+        labor_override = str(emp_name).strip() if emp_name and str(emp_name).lower() != "nan" else str(formatted_worker_id)
 
         base_item = {
             "Review": "✅ Validated",
@@ -432,7 +425,7 @@ def process_home_care_payroll(df):
         mileage_units = 0.0
 
         formatted_worker_id = int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace(".", "", 1).isdigit() else worker_id
-        labor_override = f"{emp_name} - {formatted_worker_id} ({formatted_worker_id})" if emp_name and str(emp_name).strip() and str(emp_name).lower() != "nan" else str(formatted_worker_id)
+        labor_override = str(emp_name).strip() if emp_name and str(emp_name).strip() and str(emp_name).lower() != "nan" else str(formatted_worker_id)
 
         for _, row in group.iterrows():
             comp = str(row.get("Pay Component", "")).strip()
@@ -545,6 +538,8 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
     }
 
     id_mapping = authoritative_id_map.copy()
+    name_mapping = {}
+
     if hh_file is not None:
         try:
             df_raw = pd.read_excel(hh_file, header=None) if not hasattr(hh_file, "name") or not hh_file.name.endswith(".csv") else pd.read_csv(hh_file, header=None)
@@ -558,14 +553,17 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
             hh_df = pd.read_csv(hh_file, skiprows=header_row_idx) if hasattr(hh_file, "name") and hh_file.name.endswith(".csv") else pd.read_excel(hh_file, header=header_row_idx)
             hh_df.columns = [str(c).strip() for c in hh_df.columns]
 
-            emp_col = next((c for c in hh_df.columns if "employee" in c.lower() or "name" in c.lower() or "worker" in c.lower()), hh_df.columns[0])
-            id_col = next((c for c in hh_df.columns if "id" in c.lower() or "emp" in c.lower() or "worker" in c.lower()), hh_df.columns[1] if len(hh_df.columns) > 1 else hh_df.columns[0])
+            # Column D (index 3) is Employee Name, Column E (index 4) is Employee ID
+            name_col = hh_df.columns[3] if len(hh_df.columns) > 3 else hh_df.columns[0]
+            id_col = hh_df.columns[4] if len(hh_df.columns) > 4 else hh_df.columns[1]
 
             for _, row in hh_df.iterrows():
-                emp_name = str(row.get(emp_col, "")).strip().lower()
+                emp_name_raw = row.get(name_col, "")
+                emp_name = str(emp_name_raw).strip().lower()
                 emp_id = row.get(id_col)
                 if emp_name and pd.notnull(emp_id):
                     id_mapping[emp_name] = emp_id
+                    name_mapping[emp_id] = str(emp_name_raw).strip()
         except Exception:
             pass
 
@@ -630,6 +628,15 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
             if not worker_id:
                 worker_id, matched_key = resolve_worker_id(file_lower)
 
+            formatted_worker_id = int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace(".", "", 1).isdigit() else worker_id
+
+            if formatted_worker_id in name_mapping:
+                display_name = name_mapping[formatted_worker_id]
+            else:
+                display_name = matched_key.title() if matched_key else (ts_employee_name.title() if ts_employee_name else file_base)
+
+            labor_override = display_name
+
             hours_row_idx = -1
             rate_row_idx = -1
             miles_val = 0.0
@@ -675,10 +682,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
             if not rate_hours_list and not mileage_units_list:
                 rate_hours_list = [(50.0, 40.0)]
-
-            display_name = matched_key.title() if matched_key else (ts_employee_name.title() if ts_employee_name else file_base)
-            formatted_worker_id = int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace(".", "", 1).isdigit() else worker_id
-            labor_override = f"{display_name} - {formatted_worker_id} ({formatted_worker_id})" if formatted_worker_id else display_name
 
             is_brandy = (formatted_worker_id == 1242) or ("brandy" in str(matched_key).lower()) or ("kendle" in str(matched_key).lower())
 
@@ -839,7 +842,7 @@ elif current_tab == "Upload Data":
         col1, col2 = st.columns(2)
         with col1:
             hh_master_file = st.file_uploader(
-                "Upload Home Health Master File (for ID Mapping)",
+                "Upload Home Health Master File (for ID Mapping & Names)",
                 type=["xls", "xlsx", "csv"],
                 key="hospice_hh_master",
             )
