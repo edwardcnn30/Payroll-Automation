@@ -182,6 +182,25 @@ if "raw_df" not in st.session_state:
 if "batch_processed_df" not in st.session_state:
     st.session_state.batch_processed_df = None
 
+# --- STANDARDIZED PAYCHEX TEMPLATE COLUMNS ---
+PAYCHEX_TEMPLATE_COLUMNS = [
+    "Review",
+    "Client ID",
+    "Worker ID",
+    "Org",
+    "Job Num",
+    "Pay Component",
+    "Rate",
+    "Hours",
+    "Units",
+    "Line Date",
+    "Amount",
+    "Check",
+    "Override State",
+    "Override Local",
+    "Labor Override",
+]
+
 
 # --- CORE PAYPROCESSING ENGINES ---
 
@@ -297,7 +316,11 @@ def process_home_health_payroll(df):
     if "_EmployeeName" in final_df.columns:
         final_df = final_df.drop(columns=["_EmployeeName"])
 
-    return final_df
+    # Enforce exact Paychex template column order
+    for col in PAYCHEX_TEMPLATE_COLUMNS:
+        if col not in final_df.columns:
+            final_df[col] = ""
+    return final_df[PAYCHEX_TEMPLATE_COLUMNS]
 
 
 def process_home_care_payroll(df):
@@ -468,7 +491,11 @@ def process_home_care_payroll(df):
                 "Labor Override": labor_override,
             })
 
-    return pd.DataFrame(processed_rows)
+    final_df = pd.DataFrame(processed_rows)
+    for col in PAYCHEX_TEMPLATE_COLUMNS:
+        if col not in final_df.columns:
+            final_df[col] = ""
+    return final_df[PAYCHEX_TEMPLATE_COLUMNS]
 
 
 def process_hospice_reconciliation(hh_file, timesheet_files):
@@ -632,7 +659,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
             labor_override = f"{display_name} - {formatted_worker_id} ({formatted_worker_id})" if formatted_worker_id else display_name
 
             is_brandy = (formatted_worker_id == 1242) or ("brandy" in str(matched_key).lower()) or (
-                        "kendle" in str(matched_key).lower())
+                    "kendle" in str(matched_key).lower())
 
             for rate, hours in rate_hours_list:
                 if is_brandy and rate in brandy_rate_component_map:
@@ -708,7 +735,11 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
         except Exception as e:
             st.error(f"Error parsing timesheet {ts_file.name}: {e}")
 
-    return pd.DataFrame(all_reconciled_rows)
+    final_df = pd.DataFrame(all_reconciled_rows)
+    for col in PAYCHEX_TEMPLATE_COLUMNS:
+        if col not in final_df.columns:
+            final_df[col] = ""
+    return final_df[PAYCHEX_TEMPLATE_COLUMNS]
 
 
 # --- ROUTING VIA QUERY PARAMS ---
@@ -843,199 +874,104 @@ elif current_tab == "Upload Data":
                 st.markdown("### 🔍 Comparison & Reconciled Output Preview")
                 st.dataframe(processed, use_container_width=True)
 
-                st.markdown("---")
-                st.markdown("### 💰 Employee Total Earnings & Earnings Breakdown")
-                summary_df = processed.copy()
-                summary_df["Rate"] = pd.to_numeric(summary_df["Rate"], errors="coerce").fillna(0)
-                summary_df["Hours"] = pd.to_numeric(summary_df["Hours"], errors="coerce").fillna(0)
-                summary_df["Units"] = pd.to_numeric(summary_df["Units"], errors="coerce").fillna(0)
-                summary_df["Amount"] = pd.to_numeric(summary_df["Amount"], errors="coerce").fillna(0)
-
-                worker_summary = (
-                    summary_df.groupby(["Worker ID", "Labor Override"])
-                    .agg(
-                        Total_Hours=("Hours", "sum"),
-                        Total_Mileage_Units=("Units", "sum"),
-                        Total_Earnings=("Amount", "sum"),
-                    )
-                    .reset_index()
-                )
-
-                st.markdown("#### 📊 Master Earnings Summary by Employee")
-                st.dataframe(worker_summary, use_container_width=True)
-
             except Exception as e:
-                st.error(f"Error running Hospice reconciliation: {e}")
+                st.error(f"Error processing Hospice files: {e}")
         else:
-            st.info("Please upload at least one Hospice timesheet to begin.")
+            st.info("Awaiting Hospice timesheet uploads...")
 
 elif current_tab == "Multi-LOB Batch":
-    st.markdown("### ⚡ Enterprise Multi-LOB Batch Processing Pipeline")
-    st.write(
-        "Upload all departmental files simultaneously. Hospice reconciliation will filter out duplicate hourly entries from the Home Health master file while **retaining PRN Points**.")
+    st.markdown("## ⚡ Multi-LOB Batch Processing Hub")
+    st.write("Process and combine Home Health, Home Care, and Hospice outputs into a single Paychex import layout.")
 
-    col_b1, col_b2, col_b3 = st.columns(3)
-    with col_b1:
-        batch_hh_file = st.file_uploader("Upload Home Health Data", type=["xls", "xlsx", "csv"], key="batch_hh")
-    with col_b2:
-        batch_hc_file = st.file_uploader("Upload Home Care Data", type=["xls", "xlsx", "csv"], key="batch_hc")
-    with col_b3:
-        batch_hospice_files = st.file_uploader("Upload Hospice Timesheets", type=["xls", "xlsx"],
-                                               accept_multiple_files=True, key="batch_hospice")
+    batch_files = st.file_uploader(
+        "Upload Multiple Department Files",
+        type=["xls", "xlsx", "csv"],
+        accept_multiple_files=True,
+        key="batch_files_upload"
+    )
 
-    if st.button("🚀 Run Enterprise Batch Processing Across All LOBs", type="primary", use_container_width=True):
-        try:
-            hospice_processed = pd.DataFrame()
-            hh_processed = pd.DataFrame()
-            hc_processed = pd.DataFrame()
+    if batch_files:
+        if st.button("Run Multi-LOB Batch Compilation", use_container_width=True):
+            combined_dfs = []
+            for bfile in batch_files:
+                fname_lower = bfile.name.lower()
+                try:
+                    if bfile.name.endswith(".csv"):
+                        bdf = pd.read_csv(bfile)
+                    else:
+                        bdf = pd.read_excel(bfile)
 
-            if batch_hospice_files:
-                hospice_processed = process_hospice_reconciliation(batch_hh_file, batch_hospice_files)
-                if not hospice_processed.empty:
-                    hospice_processed["LOB"] = "Hospice"
+                    if "health" in fname_lower:
+                        res = process_home_health_payroll(bdf)
+                    elif "care" in fname_lower:
+                        res = process_home_care_payroll(bdf)
+                    else:
+                        res = process_home_care_payroll(bdf)
+                    combined_dfs.append(res)
+                except Exception as e:
+                    st.warning(f"Could not process {bfile.name}: {e}")
 
-            hospice_worker_ids = set()
-            if not hospice_processed.empty and "Worker ID" in hospice_processed.columns:
-                hospice_worker_ids = set(hospice_processed["Worker ID"].dropna().astype(str).str.strip())
-
-            if batch_hh_file is not None:
-                if batch_hh_file.name.endswith(".csv"):
-                    hh_raw = pd.read_csv(batch_hh_file)
-                else:
-                    xls = pd.ExcelFile(batch_hh_file)
-                    sheet_name = "Data Export" if "Data Export" in xls.sheet_names else xls.sheet_names[0]
-                    hh_raw = pd.read_excel(xls, sheet_name=sheet_name)
-
-                hh_temp_processed = process_home_health_payroll(hh_raw)
-
-                if hospice_worker_ids and "Worker ID" in hh_temp_processed.columns:
-                    hh_temp_processed["_worker_str"] = hh_temp_processed["Worker ID"].astype(str).str.strip()
-                    is_hospice_worker = hh_temp_processed["_worker_str"].isin(hospice_worker_ids)
-                    is_prn = hh_temp_processed["Pay Component"] == "PRN Points"
-
-                    hh_processed = hh_temp_processed[~is_hospice_worker | is_prn].drop(columns=["_worker_str"])
-                else:
-                    hh_processed = hh_temp_processed
-
-                if not hh_processed.empty:
-                    hh_processed["LOB"] = "Home Health"
-
-            if batch_hc_file is not None:
-                if batch_hc_file.name.endswith(".csv"):
-                    hc_raw = pd.read_csv(batch_hc_file)
-                else:
-                    xls_hc = pd.ExcelFile(batch_hc_file)
-                    hc_sheet = xls_hc.sheet_names[0]
-                    hc_raw = pd.read_excel(xls_hc, sheet_name=hc_sheet)
-                hc_processed = process_home_care_payroll(hc_raw)
-                if not hc_processed.empty:
-                    hc_processed["LOB"] = "Home Care"
-
-            combined_dfs = [df for df in [hh_processed, hc_processed, hospice_processed] if not df.empty]
             if combined_dfs:
                 final_batch_df = pd.concat(combined_dfs, ignore_index=True)
                 st.session_state.batch_processed_df = final_batch_df
-                st.session_state.processed_df = final_batch_df
-
                 st.success(
-                    "Enterprise batch processing completed successfully with Brandy Kendle's rate-to-component mappings and reconciliation fully aligned!")
-
-                st.markdown("### 🔍 Consolidated Batch Output Preview")
+                    f"Successfully compiled {len(batch_files)} files into batch dataset ({len(final_batch_df)} rows).")
                 st.dataframe(final_batch_df, use_container_width=True)
-
-                st.markdown("---")
-                st.markdown("### 📊 Summary by Line of Business (LOB)")
-
-                summary_calc = final_batch_df.copy()
-                summary_calc["Hours"] = pd.to_numeric(summary_calc["Hours"], errors="coerce").fillna(0)
-                summary_calc["Units"] = pd.to_numeric(summary_calc["Units"], errors="coerce").fillna(0)
-                summary_calc["Rate"] = pd.to_numeric(summary_calc["Rate"], errors="coerce").fillna(0)
-                summary_calc["Explicit_Amount"] = pd.to_numeric(summary_calc["Amount"], errors="coerce").fillna(0)
-
-                summary_calc["Total_Amount_Calc"] = summary_calc["Explicit_Amount"] + (
-                            summary_calc["Hours"] * summary_calc["Rate"])
-
-                lob_summary = (
-                    summary_calc.groupby("LOB")
-                    .agg(
-                        Total_Hours=("Hours", "sum"),
-                        Total_Mileage_Units=("Units", "sum"),
-                        Total_Amount=("Total_Amount_Calc", "sum")
-                    )
-                    .reset_index()
-                )
-
-                st.dataframe(lob_summary, use_container_width=True)
-
-                col_m1, col_m2, col_m3 = st.columns(3)
-                with col_m1:
-                    st.metric("Total Processed Records", len(final_batch_df))
-                with col_m2:
-                    st.metric("Total Combined Hours", f"{summary_calc['Hours'].sum():,.2f}")
-                with col_m3:
-                    st.metric("Total Mileage Units", f"{summary_calc['Units'].sum():,.2f}")
             else:
-                st.warning("No valid data processed from the uploaded files.")
-
-        except Exception as e:
-            st.error(f"Error running Enterprise Batch processing: {e}")
-    elif st.session_state.batch_processed_df is not None:
-        st.markdown("### 🔍 Previously Processed Enterprise Batch Output")
-        st.dataframe(st.session_state.batch_processed_df, use_container_width=True)
-
-        st.markdown("---")
-        st.markdown("### 📊 Summary by Line of Business (LOB)")
-        summary_calc = st.session_state.batch_processed_df.copy()
-        if "LOB" in summary_calc.columns:
-            summary_calc["Hours"] = pd.to_numeric(summary_calc["Hours"], errors="coerce").fillna(0)
-            summary_calc["Units"] = pd.to_numeric(summary_calc["Units"], errors="coerce").fillna(0)
-            summary_calc["Rate"] = pd.to_numeric(summary_calc["Rate"], errors="coerce").fillna(0)
-            summary_calc["Explicit_Amount"] = pd.to_numeric(summary_calc["Amount"], errors="coerce").fillna(0)
-            summary_calc["Total_Amount_Calc"] = summary_calc["Explicit_Amount"] + (
-                        summary_calc["Hours"] * summary_calc["Rate"])
-
-            lob_summary = (
-                summary_calc.groupby("LOB")
-                .agg(
-                    Total_Hours=("Hours", "sum"),
-                    Total_Mileage_Units=("Units", "sum"),
-                    Total_Amount=("Total_Amount_Calc", "sum")
-                )
-                .reset_index()
-            )
-            st.dataframe(lob_summary, use_container_width=True)
+                st.error("Batch processing yielded no valid records.")
     else:
-        st.info("Upload your departmental files above and click the enterprise batch button to begin.")
+        st.info("Awaiting files for batch processing...")
 
 elif current_tab == "Export Center":
     st.markdown("## 📥 Export Center")
-    st.write("Download your validated, formatted Paychex import files.")
+    st.write("Download your processed payroll data formatted to the Paychex import standard.")
 
-    if st.session_state.processed_df is not None and not st.session_state.processed_df.empty:
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            st.session_state.processed_df.to_excel(writer, index=False, sheet_name="Payroll_Export")
-        excel_data = output.getvalue()
+    export_choice = st.radio("Select Output Dataset",
+                             ["Single Workflow Processed Data", "Multi-LOB Batch Processed Data"], horizontal=True)
+    target_df = st.session_state.processed_df if export_choice == "Single Workflow Processed Data" else st.session_state.batch_processed_df
 
-        st.download_button(
-            label="📥 Download Paychex-Ready Excel Export",
-            data=excel_data,
-            file_name="Payroll_Studio_Verified_Export.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        st.dataframe(st.session_state.processed_df, use_container_width=True)
+    if target_df is not None and not target_df.empty:
+        st.dataframe(target_df.head(15), use_container_width=True)
+
+        col_ex1, col_ex2 = st.columns(2)
+
+        output_buffer = io.BytesIO()
+        with pd.ExcelWriter(output_buffer, engine="openpyxl") as writer:
+            target_df.to_excel(writer, index=False, sheet_name="Paychex_Import")
+        excel_data = output_buffer.getvalue()
+
+        with col_ex1:
+            st.download_button(
+                "📥 Download Paychex Excel (.xlsx)",
+                data=excel_data,
+                file_name="Paychex_Payroll_Export.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+        csv_data = target_df.to_csv(index=False).encode("utf-8")
+        with col_ex2:
+            st.download_button(
+                "📥 Download Paychex CSV (.csv)",
+                data=csv_data,
+                file_name="Paychex_Payroll_Export.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
     else:
-        st.info(
-            "No processed dataset currently available in session state. Please process a workflow or batch upload first.")
+        st.warning("No active dataset available for export. Please process a workflow first.")
 
 elif current_tab == "Developer Support":
-    st.markdown("## 🛠️ Developer & Compliance Support")
-    st.write("System status, error logs, and regulatory rule sets active in Payroll Studio Enterprise.")
-    st.json({
-        "Authentication Module": "Native Streamlit Session Auth - edwardcnn30",
-        "Overtime Policy": "80-hour threshold weekly standard split",
-        "Mileage Rate": "0.73 Standard IRS/Client Reimb",
-        "Supported LOBs": ["Home Health", "Home Care", "Hospice Reconciliation"],
-        "Custom Rules": ["Brandy Kendle (ID 1242) Rate-to-Component Mapping"],
-        "Active Session": st.session_state.get("name", "Unknown")
-    })
+    st.markdown("## 🛠️ Developer Support & Diagnostics")
+    st.write("Inspect runtime environment variables and state parameters.")
+    st.write(f"- **Authenticated:** `{st.session_state.get('authenticated', False)}`")
+    st.write(f"- **Active User:** `{st.session_state.get('name', 'N/A')}`")
+    st.write(
+        f"- **Processed Rows Count:** `{len(st.session_state.processed_df) if st.session_state.processed_df is not None else 0}`")
+
+    if st.button("Purge State & Reset", use_container_width=True):
+        st.session_state.processed_df = None
+        st.session_state.raw_df = None
+        st.session_state.batch_processed_df = None
+        st.success("Session state cleared.")
+        st.rerun()
