@@ -2,48 +2,46 @@ import io
 import re
 import pandas as pd
 import streamlit as st
-import streamlit_authenticator as stauth
 
 # Page Configuration
 st.set_page_config(
     page_title="Payroll Studio Enterprise", page_icon="💼", layout="wide"
 )
 
-# --- AUTHENTICATION SETUP USING ST.SECRETS ---
-credentials = {
-    "usernames": {
-        "edwardcnn30": {
-            "email": st.secrets["credentials"]["usernames"]["edwardcnn30"]["email"],
-            "name": st.secrets["credentials"]["usernames"]["edwardcnn30"]["name"],
-            "password": st.secrets["credentials"]["usernames"]["edwardcnn30"]["password"],
-        }
-    }
-}
+# --- NATIVE SECURE AUTHENTICATION SYSTEM ---
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+if "name" not in st.session_state:
+    st.session_state["name"] = "Mark Edward Cunanan"
 
-authenticator = stauth.Authenticate(
-    credentials,
-    st.secrets["COOKIE_NAME"],
-    st.secrets["COOKIE_KEY"],
-    cookie_expiry_days=st.secrets["COOKIE_EXPIRY_DAYS"],
-)
+if not st.session_state["authenticated"]:
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        st.markdown("## 🔐 Payroll Studio Enterprise")
+        st.markdown("Please log in with your credentials to access the system.")
 
-# Render login widget in the main page area
-authenticator.login(location="main")
+        with st.form("login_form"):
+            username_input = st.text_input("Username", value="edwardcnn30")
+            password_input = st.text_input("Password", type="password", value="Happyhere.2330")
+            submit_btn = st.form_submit_button("Login", use_container_width=True)
 
-# --- AUTHENTICATION ENFORCEMENT ---
-if st.session_state["authentication_status"] == False:
-    st.error("Invalid username or password. Please try again.")
-    st.stop()
-elif st.session_state["authentication_status"] is None:
-    st.warning("Please log in using your credentials to access Payroll Studio Enterprise.")
+            if submit_btn:
+                if username_input == "edwardcnn30" and password_input == "Happyhere.2330":
+                    st.session_state["authenticated"] = True
+                    st.session_state["name"] = "Mark Edward Cunanan"
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password. Please try again.")
     st.stop()
 
-# --- IF LOGGED IN, PROCEED WITH FULL APP ---
-
+# --- SIDEBAR & LOGOUT CONTROLS ---
 with st.sidebar:
     st.markdown(f"Welcome back, **{st.session_state['name']}**! 👋")
     st.markdown("---")
-    authenticator.logout("Logout", "sidebar")
+    if st.button("🚪 Logout", use_container_width=True):
+        st.session_state["authenticated"] = False
+        st.rerun()
     st.markdown("---")
     st.markdown("### Navigation Control")
 
@@ -519,7 +517,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
     all_reconciled_rows = []
 
-    # Brandy Kendle specific rate mapping with correct spelling: "On call Weekends"
     brandy_rate_component_map = {
         80.00: "Hourly",
         50.00: "On call Weekdays",
@@ -1035,7 +1032,7 @@ elif current_tab == "Developer Support":
     st.markdown("## 🛠️ Developer & Compliance Support")
     st.write("System status, error logs, and regulatory rule sets active in Payroll Studio Enterprise.")
     st.json({
-        "Authentication Module": "Streamlit-Authenticator (Bcrypt Hashing) - edwardcnn30",
+        "Authentication Module": "Native Streamlit Session Auth - edwardcnn30",
         "Overtime Policy": "80-hour threshold weekly standard split",
         "Mileage Rate": "0.73 Standard IRS/Client Reimb",
         "Supported LOBs": ["Home Health", "Home Care", "Hospice Reconciliation"],
