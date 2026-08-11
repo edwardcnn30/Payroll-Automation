@@ -8,12 +8,19 @@ st.set_page_config(
     page_title="Payroll Studio Enterprise", page_icon="💼", layout="wide"
 )
 
-# --- NATIVE SECURE AUTHENTICATION SYSTEM ---
+# --- SESSION STATE INITIALIZATION ---
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 if "name" not in st.session_state:
     st.session_state["name"] = "Mark Edward Cunanan"
+if "processed_df" not in st.session_state:
+    st.session_state.processed_df = None
+if "raw_df" not in st.session_state:
+    st.session_state.raw_df = None
+if "batch_processed_df" not in st.session_state:
+    st.session_state.batch_processed_df = None
 
+# --- NATIVE SECURE AUTHENTICATION SYSTEM (PERSISTENT) ---
 if not st.session_state["authenticated"]:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -45,7 +52,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### Navigation Control")
 
-# Initialize Query Params for Tab Navigation
+# Initialize Query Params for Tab Navigation safely
 if "tab" not in st.query_params:
     st.query_params["tab"] = "Home"
 current_tab = st.query_params["tab"]
@@ -174,14 +181,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --- SESSION STATE INITIALIZATION ---
-if "processed_df" not in st.session_state:
-    st.session_state.processed_df = None
-if "raw_df" not in st.session_state:
-    st.session_state.raw_df = None
-if "batch_processed_df" not in st.session_state:
-    st.session_state.batch_processed_df = None
-
 # --- EXACT 17-COLUMN PAYCHEX TEMPLATE STANDARD ---
 PAYCHEX_TEMPLATE_COLUMNS = [
     "Review",
@@ -270,33 +269,24 @@ def aggregate_and_standardize(df_rows):
     agg_df["Units"] = agg_df["Units"].apply(lambda x: x if x > 0 else "")
     agg_df["Amount"] = agg_df["Amount"].apply(lambda x: x if x > 0 else "")
 
-    # --- EXACT REQUESTED PAY COMPONENT HIERARCHY SORTING RULES ---
     def assign_comp_rank(row):
         comp = str(row.get("Pay Component", ""))
         lob = str(row.get("_LOB", ""))
 
-        # 1. PRN Points - Home Health and Hospice
         if comp == "PRN Points":
             return 1
-        # 2. Dedicated Pay for Kendle (On call Weekdays, On call Weekends, Routine Visit, Start of Care)
         elif comp in ["On call Weekdays", "On call Weekends", "Routine Visit", "Start of Care"]:
             return 2
-        # 3. Hourly - Home Health
         elif comp == "Hourly" and lob == "Home Health":
             return 3
-        # 4. MILEAGE REIMB - Home Health and Hospice
         elif comp == "MILEAGE REIMB" and lob in ["Home Health", "Hospice"]:
             return 4
-        # 5. Overtime - Hospice and Home Health
         elif comp == "Overtime" and lob in ["Hospice", "Home Health"]:
             return 5
-        # 6. Hourly - Home Care
         elif comp == "Hourly" and lob == "Home Care":
             return 6
-        # 7. Overtime - Home Care
         elif comp == "Overtime" and lob == "Home Care":
             return 7
-        # 8. MILEAGE REIMB - Home Care
         elif comp == "MILEAGE REIMB" and lob == "Home Care":
             return 8
         else:
@@ -675,7 +665,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 if not worker_id:
                     worker_id, matched_key = resolve_worker_id(file_lower)
 
-                # --- KENDLE / BRANDY SAFETY FORCE-MATCH FALLBACK ---
                 if not worker_id and ("kendle" in file_lower or "brandy" in file_lower or "kendle" in ts_employee_name.lower() or "brandy" in ts_employee_name.lower()):
                     worker_id = 1242
                     matched_key = "kendle"
