@@ -689,42 +689,45 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 display_name = matched_name if matched_name else clean_file_name
                 labor_override = display_name
 
-                # --- STRICT ADJACENT/ONE-ROW VERTICAL COLUMN-BASED PARSER ---
+                # --- ARCHITECTURAL DIRECTOR & FULL-STACK PARSER ENGINE ---
+                # Scans every column vertically for columnar summary blocks matching Total Hrs + Hourly Rate pairs
                 rate_hours_list = []
                 mileage_units_list = []
 
+                valid_rates = {30.0, 22.0, 45.0, 50.0, 100.0, 90.0, 185.0, 26.0, 28.0, 10.0, 0.73}
+
                 for c_idx in range(len(df_ts.columns)):
-                    col_data = []
+                    col_nums = {}
                     for r_idx in range(len(df_ts)):
-                        cell_val = df_ts.iloc[r_idx, c_idx]
-                        if pd.notnull(cell_val):
-                            cell_str = str(cell_val).replace("$", "").strip()
+                        val = df_ts.iloc[r_idx, c_idx]
+                        if pd.notnull(val):
+                            s = str(val).replace("$", "").strip()
                             try:
-                                val_num = float(cell_str)
-                                col_data.append((r_idx, val_num))
+                                col_nums[r_idx] = float(s)
                             except:
                                 pass
 
-                    # Look for rate and hours positioned right next to each other (same row or exactly 1 row apart)
-                    for i, (r_rate, val_rate) in enumerate(col_data):
-                        if val_rate in [80.0, 45.0, 50.0, 100.0, 90.0, 185.0, 26.0, 28.0, 30.0,
-                                        10.0] or val_rate == 0.73:
-                            best_hr = None
-                            for r_hr, val_hr in col_data:
-                                if 0 < val_hr <= 200.0 and abs(r_hr - r_rate) <= 1:
-                                    if val_hr not in [80.0, 45.0, 50.0, 100.0, 90.0, 185.0, 26.0, 28.0, 30.0, 10.0]:
-                                        best_hr = val_hr
-                                        break
+                    rows = sorted(col_nums.keys())
+                    for i in range(len(rows)):
+                        r1 = rows[i]
+                        v1 = col_nums[r1]
 
-                            if best_hr is not None:
-                                if val_rate == 0.73:
-                                    if best_hr < 500:
-                                        mileage_units_list.append(best_hr)
-                                else:
-                                    pair = (val_rate, best_hr)
-                                    if pair not in rate_hours_list:
-                                        rate_hours_list.append(pair)
+                        if v1 in valid_rates:
+                            for j in range(len(rows)):
+                                if i == j:
+                                    continue
+                                r2 = rows[j]
+                                if abs(r1 - r2) <= 2:
+                                    v2 = col_nums[r2]
+                                    if v2 not in valid_rates and 0 < v2 <= 2000:
+                                        if v1 == 0.73:
+                                            mileage_units_list.append(v2)
+                                        else:
+                                            pair = (v1, v2)
+                                            if pair not in rate_hours_list:
+                                                rate_hours_list.append(pair)
 
+                # Maintain cumulative 80-hour threshold split policy across hourly components
                 accumulated_hospice_hours = 0.0
                 for rate, hours in rate_hours_list:
                     pay_comp = "Hourly"
@@ -1135,7 +1138,7 @@ elif current_tab == "Developer Support":
 
         if submit_ticket:
             if not sender_email or not message:
-                st.warning("Please fill in your email and message.")
+                st.warning("Please filter your email and message.")
             else:
                 st.success(
                     f"Your message has been successfully dispatched to **cunananmarkedward2330@gmail.com**! We will get back to you shortly."
