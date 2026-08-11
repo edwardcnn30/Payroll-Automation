@@ -1,19 +1,63 @@
 import io
 import re
+import bcrypt
 import pandas as pd
 import streamlit as st
+import streamlit_authenticator as stauth
 
 # Page Configuration
 st.set_page_config(
-    page_title="Payroll Studio", page_icon="💼", layout="wide"
+    page_title="Payroll Studio Enterprise", page_icon="💼", layout="wide"
 )
 
-# Initialize Query Params for Navigation
+# --- DYNAMIC CREDENTIALS & AUTHENTICATOR SETUP ---
+# Generate a secure bcrypt hash for password '123' dynamically to prevent version errors
+hashed_password = bcrypt.hashpw("123".encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+credentials = {
+    "usernames": {
+        "admin": {
+            "email": "admin@payrollstudio.com",
+            "name": "Administrator",
+            "password": hashed_password,
+        }
+    }
+}
+
+authenticator = stauth.Authenticate(
+    credentials,
+    "payroll_studio_auth",
+    "random_signature_key_here",
+    expiry_days=30,
+)
+
+# Render login widget in the main page area
+authenticator.login(location="main")
+
+# --- AUTHENTICATION ENFORCEMENT ---
+if st.session_state["authentication_status"] == False:
+    st.error("Invalid username or password. Please try again.")
+    st.stop()
+elif st.session_state["authentication_status"] is None:
+    st.warning("Please log in using your credentials to access Payroll Studio Enterprise.")
+    st.stop()
+
+# --- IF LOGGED IN, PROCEED WITH FULL APP ---
+
+# Secure Logout Button in Sidebar & Welcome Header
+with st.sidebar:
+    st.markdown(f"Welcome back, **{st.session_state['name']}**! 👋")
+    st.markdown("---")
+    authenticator.logout("Logout", "sidebar")
+    st.markdown("---")
+    st.markdown("### Navigation Control")
+
+# Initialize Query Params for Tab Navigation
 if "tab" not in st.query_params:
     st.query_params["tab"] = "Home"
 current_tab = st.query_params["tab"]
 
-# Custom Styling for Dark Theme & Original UI Match
+# Custom Styling for Enterprise Dark Theme & Layout Alignment
 st.markdown(
     """
     <style>
@@ -114,7 +158,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Render Sleek Header Bar with Navigation Items
 active_home = "active" if current_tab == "Home" else ""
 active_upload = "active" if current_tab == "Upload Data" else ""
 active_batch = "active" if current_tab == "Multi-LOB Batch" else ""
@@ -124,7 +167,7 @@ active_dev = "active" if current_tab == "Developer Support" else ""
 st.markdown(
     f"""
     <div class="app-header">
-        <a href="?tab=Home" class="app-logo">💼 Payroll Studio</a>
+        <a href="?tab=Home" class="app-logo">💼 Payroll Studio Enterprise</a>
         <div class="nav-links">
             <a href="?tab=Home" class="{active_home}">Home</a>
             <a href="?tab=Upload Data" class="{active_upload}">Upload Data</a>
@@ -138,7 +181,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Initialize Session State
+# --- SESSION STATE INITIALIZATION ---
 if "processed_df" not in st.session_state:
     st.session_state.processed_df = None
 if "raw_df" not in st.session_state:
@@ -147,7 +190,8 @@ if "batch_processed_df" not in st.session_state:
     st.session_state.batch_processed_df = None
 
 
-# --- 1. HOME HEALTH PROCESSOR ---
+# --- CORE PAYPROCESSING ENGINES ---
+
 def process_home_health_payroll(df):
     hourly_rates = {
         1351.0: 30.00,
@@ -156,7 +200,6 @@ def process_home_health_payroll(df):
         1279.0: 45.00,
         1307.0: 25.00,
         1067.0: 46.00,
-        # 1162.0 (Maggie Simowski) removed so MSW tasks are processed as PRN Points
         1389.0: 40.00,
         1358.0: 40.00,
         800.0: 25.00,
@@ -264,7 +307,6 @@ def process_home_health_payroll(df):
     return final_df
 
 
-# --- 2. HOME CARE PROCESSOR ---
 def process_home_care_payroll(df):
     df.columns = [str(c).strip() for c in df.columns]
 
@@ -298,32 +340,32 @@ def process_home_care_payroll(df):
 
     df = df.rename(columns=col_map)
 
-    for col in ['Worker ID', 'Employee', 'Pay Component', 'Rate', 'Hours', 'Amount', 'Units']:
+    for col in ["Worker ID", "Employee", "Pay Component", "Rate", "Hours", "Amount", "Units"]:
         if col in df.columns and isinstance(df[col], pd.DataFrame):
             df[col] = df[col].iloc[:, 0]
 
-    if 'Worker ID' not in df.columns:
-        id_col = next((c for c in df.columns if 'id' in c.lower()), df.columns[0])
-        df = df.rename(columns={id_col: 'Worker ID'})
-        if isinstance(df['Worker ID'], pd.DataFrame):
-            df['Worker ID'] = df['Worker ID'].iloc[:, 0]
+    if "Worker ID" not in df.columns:
+        id_col = next((c for c in df.columns if "id" in c.lower()), df.columns[0])
+        df = df.rename(columns={id_col: "Worker ID"})
+        if isinstance(df["Worker ID"], pd.DataFrame):
+            df["Worker ID"] = df["Worker ID"].iloc[:, 0]
 
-    if 'Hours' not in df.columns:
-        df['Hours'] = 0.0
-    if 'Rate' not in df.columns:
-        df['Rate'] = 0.0
-    if 'Pay Component' not in df.columns:
-        df['Pay Component'] = ''
-    if 'Client ID' not in df.columns:
-        df['Client ID'] = 16068715
-    if 'Employee' not in df.columns:
-        df['Employee'] = ''
+    if "Hours" not in df.columns:
+        df["Hours"] = 0.0
+    if "Rate" not in df.columns:
+        df["Rate"] = 0.0
+    if "Pay Component" not in df.columns:
+        df["Pay Component"] = ""
+    if "Client ID" not in df.columns:
+        df["Client ID"] = 16068715
+    if "Employee" not in df.columns:
+        df["Employee"] = ""
 
-    df['Hours'] = pd.to_numeric(df['Hours'], errors='coerce').fillna(0)
-    df['Rate'] = pd.to_numeric(df['Rate'], errors='coerce').fillna(0)
+    df["Hours"] = pd.to_numeric(df["Hours"], errors="coerce").fillna(0)
+    df["Rate"] = pd.to_numeric(df["Rate"], errors="coerce").fillna(0)
 
     processed_rows = []
-    grouped = df.groupby(['Worker ID', df['Employee'].astype(str)])
+    grouped = df.groupby(["Worker ID", df["Employee"].astype(str)])
 
     for (worker_id, emp_name), group in grouped:
         total_worker_hours = 0.0
@@ -331,44 +373,44 @@ def process_home_care_payroll(df):
         other_rows = []
 
         for _, row in group.iterrows():
-            comp = str(row.get('Pay Component', '')).strip()
+            comp = str(row.get("Pay Component", "")).strip()
             comp_lower = comp.lower()
-            rate = float(row.get('Rate', 0))
-            hours = float(row.get('Hours', 0))
-            units = row.get('Units', '')
+            rate = float(row.get("Rate", 0))
+            hours = float(row.get("Hours", 0))
+            units = row.get("Units", "")
 
-            if comp_lower in ['mileage', 'miles', 'mileage reimbursement', 'mileage reimb'] or rate == 0.73:
+            if comp_lower in ["mileage", "miles", "mileage reimbursement", "mileage reimb"] or rate == 0.73:
                 m_units = hours if hours > 0 else (
-                    float(units) if pd.notnull(units) and str(units).replace('.', '', 1).isdigit() else 0.0)
+                    float(units) if pd.notnull(units) and str(units).replace(".", "", 1).isdigit() else 0.0)
                 if m_units > 0:
                     mileage_units += m_units
             else:
-                if comp == '' or comp_lower == 'nan' or comp_lower == 'none':
+                if comp == "" or comp_lower == "nan" or comp_lower == "none":
                     total_worker_hours += hours
-                    other_rows.append(('Overtime', rate, hours))
-                elif 'overtime' in comp_lower or 'ot' in comp_lower:
+                    other_rows.append(("Overtime", rate, hours))
+                elif "overtime" in comp_lower or "ot" in comp_lower:
                     total_worker_hours += hours
-                    other_rows.append(('Overtime', rate, hours))
+                    other_rows.append(("Overtime", rate, hours))
                 else:
                     total_worker_hours += hours
-                    other_rows.append((comp if comp else 'Hourly', rate, hours))
+                    other_rows.append((comp if comp else "Hourly", rate, hours))
 
-        formatted_worker_id = int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace('.', '',
+        formatted_worker_id = int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace(".", "",
                                                                                                  1).isdigit() else worker_id
         labor_override = f"{emp_name} - {formatted_worker_id} ({formatted_worker_id})" if emp_name and str(
-            emp_name).strip() and str(emp_name).lower() != 'nan' else str(formatted_worker_id)
+            emp_name).strip() and str(emp_name).lower() != "nan" else str(formatted_worker_id)
 
         accumulated_hours = 0.0
         for comp_type, rate, hours in other_rows:
             if hours <= 0:
                 continue
 
-            if comp_type.lower() != 'overtime':
+            if comp_type.lower() != "overtime":
                 if accumulated_hours < 80:
                     allowed = 80 - accumulated_hours
                     if hours <= allowed:
                         accumulated_hours += hours
-                        actual_comp = 'Hourly'
+                        actual_comp = "Hourly"
                     else:
                         reg_hrs = allowed
                         accumulated_hours = 80.0
@@ -390,11 +432,11 @@ def process_home_care_payroll(df):
                             "Labor Override": labor_override,
                         })
                         hours = hours - allowed
-                        actual_comp = 'Overtime'
+                        actual_comp = "Overtime"
                 else:
-                    actual_comp = 'Overtime'
+                    actual_comp = "Overtime"
             else:
-                actual_comp = 'Overtime'
+                actual_comp = "Overtime"
 
             processed_rows.append({
                 "Review": "✅ Validated",
@@ -436,7 +478,6 @@ def process_home_care_payroll(df):
     return pd.DataFrame(processed_rows)
 
 
-# --- 3. HOSPICE RECONCILIATION PROCESSOR ---
 def process_hospice_reconciliation(hh_file, timesheet_files):
     authoritative_id_map = {
         "simowski, maggie": 1162, "maggie simowski": 1162, "maggies": 1162, "maggie": 1162, "simowski": 1162,
@@ -452,25 +493,25 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
     id_mapping = authoritative_id_map.copy()
     if hh_file is not None:
         try:
-            df_raw = pd.read_excel(hh_file, header=None) if not hasattr(hh_file, 'name') or not hh_file.name.endswith(
-                '.csv') else pd.read_csv(hh_file, header=None)
+            df_raw = pd.read_excel(hh_file, header=None) if not hasattr(hh_file, "name") or not hh_file.name.endswith(
+                ".csv") else pd.read_csv(hh_file, header=None)
             header_row_idx = 0
             for r in range(min(10, len(df_raw))):
                 row_str = " ".join([str(df_raw.iloc[r, c]).lower() for c in range(len(df_raw.columns))])
-                if ('employee' in row_str or 'worker' in row_str or 'name' in row_str) and (
-                        'id' in row_str or 'emp' in row_str):
+                if ("employee" in row_str or "worker" in row_str or "name" in row_str) and (
+                        "id" in row_str or "emp" in row_str):
                     header_row_idx = r
                     break
 
-            hh_df = pd.read_csv(hh_file, skiprows=header_row_idx) if hasattr(hh_file, 'name') and hh_file.name.endswith(
-                '.csv') else pd.read_excel(hh_file, header=header_row_idx)
+            hh_df = pd.read_csv(hh_file, skiprows=header_row_idx) if hasattr(hh_file, "name") and hh_file.name.endswith(
+                ".csv") else pd.read_excel(hh_file, header=header_row_idx)
             hh_df.columns = [str(c).strip() for c in hh_df.columns]
 
             emp_col = next(
-                (c for c in hh_df.columns if 'employee' in c.lower() or 'name' in c.lower() or 'worker' in c.lower()),
+                (c for c in hh_df.columns if "employee" in c.lower() or "name" in c.lower() or "worker" in c.lower()),
                 hh_df.columns[0])
             id_col = next(
-                (c for c in hh_df.columns if 'id' in c.lower() or 'emp' in c.lower() or 'worker' in c.lower()),
+                (c for c in hh_df.columns if "id" in c.lower() or "emp" in c.lower() or "worker" in c.lower()),
                 hh_df.columns[1] if len(hh_df.columns) > 1 else hh_df.columns[0])
 
             for _, row in hh_df.iterrows():
@@ -511,13 +552,13 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     if k in target_lower or target_lower in k:
                         return v, k
 
-                target_tokens = set(re.findall(r'\b[a-z]{3,}\b', target_lower))
+                target_tokens = set(re.findall(r"\b[a-z]{3,}\b", target_lower))
                 best_id = None
                 best_key = ""
                 max_overlap = 0
 
                 for k, v in id_mapping.items():
-                    key_tokens = set(re.findall(r'\b[a-z]{3,}\b', k))
+                    key_tokens = set(re.findall(r"\b[a-z]{3,}\b", k))
                     overlap = len(target_tokens.intersection(key_tokens))
                     if overlap > max_overlap:
                         max_overlap = overlap
@@ -583,7 +624,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
             display_name = matched_key.title() if matched_key else (
                 ts_employee_name.title() if ts_employee_name else file_base)
-            formatted_worker_id = int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace('.', '',
+            formatted_worker_id = int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace(".", "",
                                                                                                      1).isdigit() else worker_id
             labor_override = f"{display_name} - {formatted_worker_id} ({formatted_worker_id})" if formatted_worker_id else display_name
 
@@ -659,7 +700,8 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
     return pd.DataFrame(all_reconciled_rows)
 
 
-# --- PAGE ROUTING ---
+# --- ROUTING VIA QUERY PARAMS ---
+
 if current_tab == "Home":
     st.markdown(
         '<div class="hero-title">Everything You Need to <span>Start</span>,'
@@ -671,7 +713,7 @@ if current_tab == "Home":
         '<div class="hero-subtitle">Transform raw operational exports into'
         " sleek, verified, Paychex-ready statements instantly. Automatically"
         " catch new employees, per diem rates, and missing IDs with live review"
-        " flags.</div>",
+        " flags across Home Health, Home Care, and Hospice workflows.</div>",
         unsafe_allow_html=True,
     )
     st.markdown(
@@ -681,7 +723,7 @@ if current_tab == "Home":
     )
 
 elif current_tab == "Upload Data":
-    st.markdown("## 📂 Select Upload Workflow (Original Individual Tabs)")
+    st.markdown("## 📂 Select Upload Workflow (Specialized LOBs)")
 
     upload_mode = st.radio(
         "Choose Upload Type",
@@ -766,7 +808,7 @@ elif current_tab == "Upload Data":
         else:
             st.info("Awaiting Home Care file upload...")
 
-    else:  # Hospice Reconciliation
+    else:
         st.markdown("### 🕊️ Hospice Reconciliation Workflow")
         col1, col2 = st.columns(2)
         with col1:
@@ -836,18 +878,15 @@ elif current_tab == "Multi-LOB Batch":
             hh_processed = pd.DataFrame()
             hc_processed = pd.DataFrame()
 
-            # 1. Process Hospice First
             if batch_hospice_files:
                 hospice_processed = process_hospice_reconciliation(batch_hh_file, batch_hospice_files)
                 if not hospice_processed.empty:
                     hospice_processed["LOB"] = "Hospice"
 
-            # Extract worker IDs processed under Hospice
             hospice_worker_ids = set()
             if not hospice_processed.empty and "Worker ID" in hospice_processed.columns:
                 hospice_worker_ids = set(hospice_processed["Worker ID"].dropna().astype(str).str.strip())
 
-            # 2. Process Home Health (Filtering out hourly workers in Hospice, but keeping PRN Points)
             if batch_hh_file is not None:
                 if batch_hh_file.name.endswith(".csv"):
                     hh_raw = pd.read_csv(batch_hh_file)
@@ -870,7 +909,6 @@ elif current_tab == "Multi-LOB Batch":
                 if not hh_processed.empty:
                     hh_processed["LOB"] = "Home Health"
 
-            # 3. Process Home Care
             if batch_hc_file is not None:
                 if batch_hc_file.name.endswith(".csv"):
                     hc_raw = pd.read_csv(batch_hc_file)
@@ -881,7 +919,6 @@ elif current_tab == "Multi-LOB Batch":
                 if not hc_processed.empty:
                     hc_processed["LOB"] = "Home Care"
 
-            # Combine all outputs
             combined_dfs = [df for df in [hh_processed, hc_processed, hospice_processed] if not df.empty]
             if combined_dfs:
                 final_batch_df = pd.concat(combined_dfs, ignore_index=True)
@@ -903,7 +940,6 @@ elif current_tab == "Multi-LOB Batch":
                 summary_calc["Rate"] = pd.to_numeric(summary_calc["Rate"], errors="coerce").fillna(0)
                 summary_calc["Explicit_Amount"] = pd.to_numeric(summary_calc["Amount"], errors="coerce").fillna(0)
 
-                # Calculate total monetary amount (Explicit Amount + Hours * Rate for hourly components)
                 summary_calc["Total_Amount_Calc"] = summary_calc["Explicit_Amount"] + (
                             summary_calc["Hours"] * summary_calc["Rate"])
 
@@ -958,3 +994,35 @@ elif current_tab == "Multi-LOB Batch":
             st.dataframe(lob_summary, use_container_width=True)
     else:
         st.info("Upload your departmental files above and click the enterprise batch button to begin.")
+
+elif current_tab == "Export Center":
+    st.markdown("## 📥 Export Center")
+    st.write("Download your validated, formatted Paychex import files.")
+
+    if st.session_state.processed_df is not None and not st.session_state.processed_df.empty:
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            st.session_state.processed_df.to_excel(writer, index=False, sheet_name="Payroll_Export")
+        excel_data = output.getvalue()
+
+        st.download_button(
+            label="📥 Download Paychex-Ready Excel Export",
+            data=excel_data,
+            file_name="Payroll_Studio_Verified_Export.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        st.dataframe(st.session_state.processed_df, use_container_width=True)
+    else:
+        st.info(
+            "No processed dataset currently available in session state. Please process a workflow or batch upload first.")
+
+elif current_tab == "Developer Support":
+    st.markdown("## 🛠️ Developer & Compliance Support")
+    st.write("System status, error logs, and regulatory rule sets active in Payroll Studio Enterprise.")
+    st.json({
+        "Authentication Module": "Streamlit-Authenticator (Bcrypt Hashing)",
+        "Overtime Policy": "80-hour threshold weekly standard split",
+        "Mileage Rate": "0.73 Standard IRS/Client Reimb",
+        "Supported LOBs": ["Home Health", "Home Care", "Hospice Reconciliation"],
+        "Active Session": st.session_state.get("name", "Unknown")
+    })

@@ -1,0 +1,12 @@
+credentials:
+  usernames:
+    admin:
+      email: admin@payrollstudio.com
+      name: Administrator
+      password: "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW"
+cookie:
+  expiry_days: 30
+  key: "payroll_studio_signature_key"
+  name: "payroll_studio_cookie"
+preauthorized:
+  emails: []
