@@ -623,7 +623,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
     all_raw_rows = []
 
-    # Standard rates for general staff (Hourly, Routine Visit, Start of Care)
     general_hospice_rates = {
         80.00: "Hourly",
         45.00: "Hourly",
@@ -631,7 +630,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
         185.00: "Start of Care",
     }
 
-    # Exclusive rates for Brandy (Includes On Call Weekdays & Weekends)
     brandy_hospice_rates = {
         80.00: "Hourly",
         50.00: "On call Weekdays",
@@ -701,79 +699,49 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 display_name = matched_name if matched_name else clean_file_name
                 labor_override = display_name
 
-                # Determine if employee is Brandy to apply On-Call exclusive pay components
                 is_brandy = "brandy" in display_name.lower()
                 active_rate_dict = brandy_hospice_rates if is_brandy else general_hospice_rates
 
-                hours_row_idx = -1
-                rate_row_idx = -1
-                miles_val = 0.0
-
-                for r_idx in range(len(df_ts)):
-                    row_vals = [str(df_ts.iloc[r_idx, c]).strip().lower() for c in range(len(df_ts.columns))]
-                    row_str = " ".join(row_vals)
-
-                    if "total hrs" in row_str or "total hours" in row_str or "hours" in row_str:
-                        if hours_row_idx == -1:
-                            hours_row_idx = r_idx
-                    if "hourly rate" in row_str or "rate" in row_str:
-                        if rate_row_idx == -1:
-                            rate_row_idx = r_idx
-
-                    if "miles" in row_str or "mileage" in row_str:
-                        for c_idx, val in enumerate(row_vals):
-                            if val == "" or val == "nan":
-                                continue
-                            try:
-                                f_val = float(df_ts.iloc[r_idx, c_idx])
-                                if 0 < f_val < 300:
-                                    miles_val = max(miles_val, f_val)
-                            except:
-                                pass
-
+                # --- ADVANCED DUAL-PASS MATRIX SCANNER FOR HOSPICE TOTALS ---
                 rate_hours_list = []
                 mileage_units_list = []
 
-                if hours_row_idx != -1 and rate_row_idx != -1:
+                for r_idx in range(len(df_ts)):
                     for c_idx in range(len(df_ts.columns)):
-                        hrs_cell = df_ts.iloc[hours_row_idx, c_idx]
-                        rate_cell = df_ts.iloc[rate_row_idx, c_idx]
+                        cell_val_raw = df_ts.iloc[r_idx, c_idx]
+                        cell_str = str(cell_val_raw).strip().lower()
 
+                        # Check for Mileage / Miles totals explicitly anywhere in sheet
+                        if any(m_keyword in cell_str for m_keyword in ["mile", "travel", "reimb"]):
+                            for scan_c in range(max(0, c_idx - 2), min(len(df_ts.columns), c_idx + 3)):
+                                try:
+                                    m_val = float(str(df_ts.iloc[r_idx, scan_c]).replace("$", "").strip())
+                                    if 0 < m_val < 500 and m_val != 0.73:
+                                        mileage_units_list.append(m_val)
+                                except:
+                                    pass
+
+                        # Scan for explicit rate and hours pairings in summary blocks or line entries
                         try:
-                            hrs_val = float(hrs_cell)
-                            rate_val = float(str(rate_cell).replace("$", "").strip())
-
-                            if 0 < hrs_val <= 24:
-                                if rate_val == 0.73:
-                                    mileage_units_list.append(hrs_val)
-                                elif rate_val in active_rate_dict:
-                                    rate_hours_list.append((rate_val, hrs_val))
+                            val_num = float(str(cell_val_raw).replace("$", "").strip())
+                            if val_num in active_rate_dict or val_num == 0.73:
+                                # Look around neighboring cells for corresponding hours or quantities
+                                for nc in range(max(0, c_idx - 3), min(len(df_ts.columns), c_idx + 4)):
+                                    if nc == c_idx:
+                                        continue
+                                    try:
+                                        nbr_val = float(str(df_ts.iloc[r_idx, nc]).replace("$", "").strip())
+                                        if 0 < nbr_val <= 200:
+                                            if val_num == 0.73:
+                                                mileage_units_list.append(nbr_val)
+                                            else:
+                                                pair = (val_num, nbr_val)
+                                                if pair not in rate_hours_list:
+                                                    rate_hours_list.append(pair)
+                                    except:
+                                        pass
                         except:
                             pass
-
-                # Fallback / Aggregate Scan: Check entire sheet for explicit labeled totals or summary cells matching hourly rates
-                if not rate_hours_list:
-                    for r_idx in range(len(df_ts)):
-                        for c_idx in range(len(df_ts.columns)):
-                            cell_str = str(df_ts.iloc[r_idx, c_idx]).strip().lower()
-                            if any(term in cell_str for term in ["total", "summary", "regular", "hourly"]):
-                                # Look around this cell for rate and hours values
-                                for scan_r in range(max(0, r_idx - 2), min(len(df_ts), r_idx + 3)):
-                                    for scan_c in range(len(df_ts.columns)):
-                                        try:
-                                            val = float(df_ts.iloc[scan_r, scan_c])
-                                            if val in active_rate_dict:
-                                                # Check neighboring cells for corresponding hours amount
-                                                for nc in range(max(0, scan_c - 2),
-                                                                min(len(df_ts.columns), scan_c + 3)):
-                                                    if nc == scan_c:
-                                                        continue
-                                                    nbr_val = float(df_ts.iloc[scan_r, nc])
-                                                    if 0 < nbr_val <= 200:  # Allow larger total hours ranges in summary rows
-                                                        if (val, nbr_val) not in rate_hours_list:
-                                                            rate_hours_list.append((val, nbr_val))
-                                        except:
-                                            pass
 
                 for rate, hours in rate_hours_list:
                     pay_comp = active_rate_dict[rate]
@@ -799,7 +767,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                         "_LOB": "Hospice",
                     })
 
-                total_miles = miles_val + sum(mileage_units_list)
+                total_miles = sum(mileage_units_list)
                 if total_miles > 0:
                     all_raw_rows.append({
                         "Review": "✅ Validated",
