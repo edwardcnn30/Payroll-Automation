@@ -681,7 +681,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     worker_id, matched_name = resolve_worker_id(clean_file_name)
 
                 if not worker_id:
-                    worker_id = 1349
+                    worker_id = 349
                     matched_name = clean_file_name
 
                 formatted_worker_id = int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace(".", "",
@@ -689,60 +689,62 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 display_name = matched_name if matched_name else clean_file_name
                 labor_override = display_name
 
-                # --- ADVANCED ARCHITECTURAL PARSER ENGINE (STRICT NUMERIC BOUNDARY CAPS) ---
+                # --- EXACT HOSPICE PARSER: TOTAL HOURS & HOURLY RATE MAPPING (DISREGARDING TOTAL PAY) ---
                 rate_hours_list = []
                 mileage_units_list = []
                 prn_amounts_list = []
 
-                valid_rates = {30.0, 22.0, 45.0, 50.0, 100.0, 90.0, 185.0, 26.0, 28.0, 10.0, 0.73}
+                valid_rates = {22.0, 26.0, 28.0, 30.0, 40.0, 45.0, 50.0, 90.0, 100.0, 185.0}
 
-                for c_idx in range(len(df_ts.columns)):
-                    col_nums = {}
-                    for r_idx in range(len(df_ts)):
-                        val = df_ts.iloc[r_idx, c_idx]
+                for r_idx in range(len(df_ts)):
+                    row_vals = [df_ts.iloc[r_idx, c] for c in range(len(df_ts.columns))]
+                    row_str = " ".join([str(v).lower() for v in row_vals if pd.notnull(v)])
+
+                    # STRICTLY DISREGARD TOTAL PAY COLUMN OR SUMMARY BLOCKS
+                    if "total pay" in row_str or "gross" in row_str or "balance" in row_str:
+                        continue
+
+                    r_rate = None
+                    r_hours = None
+
+                    for val in row_vals:
                         if pd.notnull(val):
                             s = str(val).replace("$", "").strip()
                             try:
-                                col_nums[r_idx] = float(s)
+                                f_val = float(s)
+                                if f_val in valid_rates:
+                                    if r_rate is None:
+                                        r_rate = f_val
+                                elif 0 < f_val <= 168.0 and f_val != r_rate:
+                                    if f_val == 0.73:
+                                        mileage_units_list.append(f_val)
+                                    else:
+                                        r_hours = f_val
                             except:
                                 pass
 
-                    rows = sorted(col_nums.keys())
-                    for i in range(len(rows)):
-                        r1 = rows[i]
-                        v1 = col_nums[r1]
+                    if r_rate is not None and r_hours is not None:
+                        rate_hours_list.append((r_rate, r_hours))
 
-                        if v1 in valid_rates:
-                            for j in range(len(rows)):
-                                if i == j:
-                                    continue
-                                r2 = rows[j]
-                                if abs(r1 - r2) <= 2:
-                                    v2 = col_nums[r2]
-                                    # STRICT VALIDATION: Hours/Units must be realistic (0 to 168 max per bi-weekly pay cycle)
-                                    if v2 not in valid_rates and 0 < v2 <= 168.0:
-                                        if v1 == 0.73:
-                                            mileage_units_list.append(v2)
-                                        else:
-                                            pair = (v1, v2)
-                                            if pair not in rate_hours_list:
-                                                rate_hours_list.append(pair)
-                                    # If a large amount/total pay value is located vertically, catch it as PRN / Point Amount equivalent
-                                    elif v2 not in valid_rates and v2 > 168.0 and v1 in {30.0, 22.0, 26.0, 28.0}:
-                                        prn_amounts_list.append(v2)
+                display_lower = display_name.lower()
+                is_brandys_sheet = "brandy" in display_lower
 
-                # Maintain cumulative 80-hour threshold split policy across hourly components
                 accumulated_hospice_hours = 0.0
                 for rate, hours in rate_hours_list:
-                    pay_comp = "Hourly"
-                    if rate == 50.0:
-                        pay_comp = "On call Weekdays"
-                    elif rate == 100.0:
-                        pay_comp = "On call Weekends"
-                    elif rate == 90.0:
-                        pay_comp = "Routine Visit"
-                    elif rate == 185.0:
-                        pay_comp = "Start of Care"
+                    # On call components are dedicated strictly for Brandy; Cooper / Katherine and others use Hourly
+                    if is_brandys_sheet:
+                        if rate == 50.0:
+                            pay_comp = "On call Weekdays"
+                        elif rate == 100.0:
+                            pay_comp = "On call Weekends"
+                        elif rate == 90.0:
+                            pay_comp = "Routine Visit"
+                        elif rate == 185.0:
+                            pay_comp = "Start of Care"
+                        else:
+                            pay_comp = "Hourly"
+                    else:
+                        pay_comp = "Hourly"
 
                     if pay_comp == "Hourly":
                         if accumulated_hospice_hours < 80:
@@ -850,7 +852,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                         "_LOB": "Hospice",
                     })
 
-                display_lower = display_name.lower()
                 matched_prn_keys = [k for k in prn_points_by_employee.keys() if
                                     k in display_lower or display_lower in k]
                 for pk in matched_prn_keys:
@@ -860,31 +861,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                         prn_row_copy["Labor Override"] = display_name
                         prn_row_copy["_EmployeeName"] = display_name
                         all_raw_rows.append(prn_row_copy)
-
-                # Ensure workers like Brandy get PRN points if their sheets contain point/amount payouts not captured in master
-                if not matched_prn_keys and prn_amounts_list:
-                    for amt in prn_amounts_list:
-                        all_raw_rows.append({
-                            "Review": "✅ Validated",
-                            "Client ID": 16068715,
-                            "Worker ID": formatted_worker_id,
-                            "Org": "",
-                            "Job Number": "",
-                            "Pay Component": "PRN Points",
-                            "Rate": "",
-                            "Rate Number": "",
-                            "Hours": "",
-                            "Units": "",
-                            "Line Date": "",
-                            "Amount": amt,
-                            "Check Seq Number": "",
-                            "Override State": "",
-                            "Override Local": "",
-                            "Override Local Jurisdiction": "",
-                            "Labor Override": labor_override,
-                            "_EmployeeName": display_name,
-                            "_LOB": "Hospice",
-                        })
 
             except Exception as e:
                 st.error(f"Error processing hospice timesheet {ts_file.name}: {e}")
