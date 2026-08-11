@@ -689,10 +689,10 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 display_name = matched_name if matched_name else clean_file_name
                 labor_override = display_name
 
-                # --- ARCHITECTURAL DIRECTOR & FULL-STACK PARSER ENGINE ---
-                # Scans every column vertically for columnar summary blocks matching Total Hrs + Hourly Rate pairs
+                # --- ADVANCED ARCHITECTURAL PARSER ENGINE (STRICT NUMERIC BOUNDARY CAPS) ---
                 rate_hours_list = []
                 mileage_units_list = []
+                prn_amounts_list = []
 
                 valid_rates = {30.0, 22.0, 45.0, 50.0, 100.0, 90.0, 185.0, 26.0, 28.0, 10.0, 0.73}
 
@@ -719,13 +719,17 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                                 r2 = rows[j]
                                 if abs(r1 - r2) <= 2:
                                     v2 = col_nums[r2]
-                                    if v2 not in valid_rates and 0 < v2 <= 2000:
+                                    # STRICT VALIDATION: Hours/Units must be realistic (0 to 168 max per bi-weekly pay cycle)
+                                    if v2 not in valid_rates and 0 < v2 <= 168.0:
                                         if v1 == 0.73:
                                             mileage_units_list.append(v2)
                                         else:
                                             pair = (v1, v2)
                                             if pair not in rate_hours_list:
                                                 rate_hours_list.append(pair)
+                                    # If a large amount/total pay value is located vertically, catch it as PRN / Point Amount equivalent
+                                    elif v2 not in valid_rates and v2 > 168.0 and v1 in {30.0, 22.0, 26.0, 28.0}:
+                                        prn_amounts_list.append(v2)
 
                 # Maintain cumulative 80-hour threshold split policy across hourly components
                 accumulated_hospice_hours = 0.0
@@ -856,6 +860,31 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                         prn_row_copy["Labor Override"] = display_name
                         prn_row_copy["_EmployeeName"] = display_name
                         all_raw_rows.append(prn_row_copy)
+
+                # Ensure workers like Brandy get PRN points if their sheets contain point/amount payouts not captured in master
+                if not matched_prn_keys and prn_amounts_list:
+                    for amt in prn_amounts_list:
+                        all_raw_rows.append({
+                            "Review": "✅ Validated",
+                            "Client ID": 16068715,
+                            "Worker ID": formatted_worker_id,
+                            "Org": "",
+                            "Job Number": "",
+                            "Pay Component": "PRN Points",
+                            "Rate": "",
+                            "Rate Number": "",
+                            "Hours": "",
+                            "Units": "",
+                            "Line Date": "",
+                            "Amount": amt,
+                            "Check Seq Number": "",
+                            "Override State": "",
+                            "Override Local": "",
+                            "Override Local Jurisdiction": "",
+                            "Labor Override": labor_override,
+                            "_EmployeeName": display_name,
+                            "_LOB": "Hospice",
+                        })
 
             except Exception as e:
                 st.error(f"Error processing hospice timesheet {ts_file.name}: {e}")
@@ -1138,7 +1167,7 @@ elif current_tab == "Developer Support":
 
         if submit_ticket:
             if not sender_email or not message:
-                st.warning("Please filter your email and message.")
+                st.warning("Please fill in your email and message.")
             else:
                 st.success(
                     f"Your message has been successfully dispatched to **cunananmarkedward2330@gmail.com**! We will get back to you shortly."
