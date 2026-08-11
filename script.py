@@ -8,7 +8,7 @@ st.set_page_config(
     page_title="Payroll Studio Enterprise", page_icon="💼", layout="wide"
 )
 
-# --- NATIVE SECURE AUTHENTICATION SYSTEM ---
+# --- NATIVE SECURE AUTHENTICATION SYSTEM (BLANK FIELDS) ---
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 if "name" not in st.session_state:
@@ -22,8 +22,8 @@ if not st.session_state["authenticated"]:
         st.markdown("Please log in with your credentials to access the system.")
 
         with st.form("login_form"):
-            username_input = st.text_input("Username", value="edwardcnn30")
-            password_input = st.text_input("Password", type="password", value="Happyhere.2330")
+            username_input = st.text_input("Username")
+            password_input = st.text_input("Password", type="password")
             submit_btn = st.form_submit_button("Login", use_container_width=True)
 
             if submit_btn:
