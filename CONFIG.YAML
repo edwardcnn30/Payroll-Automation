@@ -1,13 +1,14 @@
 credentials:
   usernames:
     admin:
-      email: admin@payrollstudio.com
-      name: Administrator
-      password: $2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW
+      email: admin@payroll.com
+      name: Admin User
+      password: password123
+    hr_specialist:
+      email: hr@payroll.com
+      name: HR Specialist
+      password: securepassword
 cookie:
   expiry_days: 30
-  key: random_signature_key_here
-  name: payroll_studio_auth
-preauthorized:
-  emails:
-    - admin@payrollstudio.com
+  key: payroll_signature_key
+  name: payroll_auth_cookie
