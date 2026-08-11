@@ -689,9 +689,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 display_name = matched_name if matched_name else clean_file_name
                 labor_override = display_name
 
-                is_brandy = "brandy" in display_name.lower()
-
-                # --- STRICT VERTICAL COLUMN-BASED PARSER ---
+                # --- UNIVERSAL STRICT VERTICAL COLUMN-BASED PARSER ---
                 rate_hours_list = []
                 mileage_units_list = []
 
@@ -705,10 +703,9 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                             cell_str = str(cell_val).replace("$", "").strip()
                             try:
                                 val_num = float(cell_str)
+                                # Accept all standard rates across all workers universally
                                 if val_num in [80.0, 45.0, 50.0, 100.0, 90.0, 185.0, 26.0, 28.0, 30.0,
                                                10.0] or val_num == 0.73:
-                                    if val_num in [50.0, 100.0] and not is_brandy:
-                                        continue
                                     col_rates.append((r_idx, val_num))
                                 elif 0 < val_num <= 200.0:
                                     col_hours.append((r_idx, val_num))
