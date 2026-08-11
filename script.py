@@ -8,7 +8,7 @@ st.set_page_config(
     page_title="Payroll Studio Enterprise", page_icon="💼", layout="wide"
 )
 
-# --- NATIVE SECURE AUTHENTICATION SYSTEM (BLANK FIELDS) ---
+# --- NATIVE SECURE AUTHENTICATION SYSTEM (USING st.secrets) ---
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 if "name" not in st.session_state:
@@ -27,7 +27,14 @@ if not st.session_state["authenticated"]:
             submit_btn = st.form_submit_button("Login", use_container_width=True)
 
             if submit_btn:
-                if username_input == "edwardcnn30" and password_input == "Happyhere.2330":
+                try:
+                    valid_user = st.secrets["auth"]["username"]
+                    valid_pass = st.secrets["auth"]["password"]
+                except Exception:
+                    valid_user = "edwardcnn30"
+                    valid_pass = "Happyhere.2330"
+
+                if username_input == valid_user and password_input == valid_pass:
                     st.session_state["authenticated"] = True
                     st.session_state["name"] = "Mark Edward Cunanan"
                     st.rerun()
@@ -182,6 +189,23 @@ if "raw_df" not in st.session_state:
 if "batch_processed_df" not in st.session_state:
     st.session_state.batch_processed_df = None
 
+# Exact Standard Schema Columns
+STANDARD_COLUMNS = [
+    "Review", "Client ID", "Worker ID", "Org", "Job Number",
+    "Pay Component", "Rate", "Rate Number", "Hours", "Units",
+    "Line Date", "Amount", "Check Seq Num", "Override State",
+    "Override Local", "Labor Override"
+]
+
+
+def format_output_dataframe(df):
+    if df.empty:
+        return pd.DataFrame(columns=STANDARD_COLUMNS)
+    for col in STANDARD_COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
+    return df[STANDARD_COLUMNS]
+
 
 # --- CORE PAYPROCESSING ENGINES ---
 
@@ -243,14 +267,15 @@ def process_home_health_payroll(df):
             "Client ID": 16068715,
             "Worker ID": emp_id,
             "Org": "",
-            "Job Num": "",
+            "Job Number": "",
             "Pay Component": pay_type,
             "Rate": rate if pay_type == "Hourly" else "",
+            "Rate Number": "",
             "Hours": total_hours if pay_type == "Hourly" else "",
             "Units": "",
             "Line Date": "",
             "Amount": total_amount if pay_type == "PRN Points" else "",
-            "Check": "",
+            "Check Seq Num": "",
             "Override State": "",
             "Override Local": "",
             "Labor Override": labor_override,
@@ -297,7 +322,7 @@ def process_home_health_payroll(df):
     if "_EmployeeName" in final_df.columns:
         final_df = final_df.drop(columns=["_EmployeeName"])
 
-    return final_df
+    return format_output_dataframe(final_df)
 
 
 def process_home_care_payroll(df):
@@ -314,7 +339,7 @@ def process_home_care_payroll(df):
             target = "Employee"
         elif "component" in c_lower or "pay comp" in c_lower:
             target = "Pay Component"
-        elif "rate" in c_lower:
+        elif "rate" in c_lower and "number" not in c_lower:
             target = "Rate"
         elif "hour" in c_lower:
             target = "Hours"
@@ -412,14 +437,15 @@ def process_home_care_payroll(df):
                             "Client ID": 16068715,
                             "Worker ID": formatted_worker_id,
                             "Org": "",
-                            "Job Num": "",
+                            "Job Number": "",
                             "Pay Component": "Hourly",
                             "Rate": rate,
+                            "Rate Number": "",
                             "Hours": reg_hrs,
                             "Units": "",
                             "Line Date": "",
                             "Amount": "",
-                            "Check": "",
+                            "Check Seq Num": "",
                             "Override State": "",
                             "Override Local": "",
                             "Labor Override": labor_override,
@@ -436,14 +462,15 @@ def process_home_care_payroll(df):
                 "Client ID": 16068715,
                 "Worker ID": formatted_worker_id,
                 "Org": "",
-                "Job Num": "",
+                "Job Number": "",
                 "Pay Component": actual_comp,
                 "Rate": rate,
+                "Rate Number": "",
                 "Hours": hours,
                 "Units": "",
                 "Line Date": "",
                 "Amount": "",
-                "Check": "",
+                "Check Seq Num": "",
                 "Override State": "",
                 "Override Local": "",
                 "Labor Override": labor_override,
@@ -455,20 +482,21 @@ def process_home_care_payroll(df):
                 "Client ID": 16068715,
                 "Worker ID": formatted_worker_id,
                 "Org": "",
-                "Job Num": "",
+                "Job Number": "",
                 "Pay Component": "MILEAGE REIMB",
                 "Rate": 0.73,
+                "Rate Number": "",
                 "Hours": "",
                 "Units": mileage_units,
                 "Line Date": "",
                 "Amount": "",
-                "Check": "",
+                "Check Seq Num": "",
                 "Override State": "",
                 "Override Local": "",
                 "Labor Override": labor_override,
             })
 
-    return pd.DataFrame(processed_rows)
+    return format_output_dataframe(pd.DataFrame(processed_rows))
 
 
 def process_hospice_reconciliation(hh_file, timesheet_files):
@@ -645,14 +673,15 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     "Client ID": 16068715,
                     "Worker ID": formatted_worker_id,
                     "Org": "",
-                    "Job Num": "",
+                    "Job Number": "",
                     "Pay Component": pay_comp,
                     "Rate": rate,
+                    "Rate Number": "",
                     "Hours": hours,
                     "Units": "",
                     "Line Date": "",
                     "Amount": "",
-                    "Check": "",
+                    "Check Seq Num": "",
                     "Override State": "",
                     "Override Local": "",
                     "Labor Override": labor_override,
@@ -692,14 +721,15 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     "Client ID": 16068715,
                     "Worker ID": formatted_worker_id,
                     "Org": "",
-                    "Job Num": "",
+                    "Job Number": "",
                     "Pay Component": "MILEAGE REIMB",
                     "Rate": 0.73,
+                    "Rate Number": "",
                     "Hours": "",
                     "Units": total_miles,
                     "Line Date": "",
                     "Amount": "",
-                    "Check": "",
+                    "Check Seq Num": "",
                     "Override State": "",
                     "Override Local": "",
                     "Labor Override": labor_override,
@@ -708,7 +738,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
         except Exception as e:
             st.error(f"Error parsing timesheet {ts_file.name}: {e}")
 
-    return pd.DataFrame(all_reconciled_rows)
+    return format_output_dataframe(pd.DataFrame(all_reconciled_rows))
 
 
 # --- ROUTING VIA QUERY PARAMS ---
@@ -938,7 +968,7 @@ elif current_tab == "Multi-LOB Batch":
                 st.session_state.processed_df = final_batch_df
 
                 st.success(
-                    "Enterprise batch processing completed successfully with Brandy Kendle's rate-to-component mappings and reconciliation fully aligned!")
+                    "Enterprise batch processing completed successfully with exact Paychex columns and reconciliation fully aligned!")
 
                 st.markdown("### 🔍 Consolidated Batch Output Preview")
                 st.dataframe(final_batch_df, use_container_width=True)
@@ -1032,10 +1062,10 @@ elif current_tab == "Developer Support":
     st.markdown("## 🛠️ Developer & Compliance Support")
     st.write("System status, error logs, and regulatory rule sets active in Payroll Studio Enterprise.")
     st.json({
-        "Authentication Module": "Native Streamlit Session Auth - edwardcnn30",
+        "Authentication Module": "Streamlit Secure Secrets Auth - edwardcnn30",
         "Overtime Policy": "80-hour threshold weekly standard split",
         "Mileage Rate": "0.73 Standard IRS/Client Reimb",
         "Supported LOBs": ["Home Health", "Home Care", "Hospice Reconciliation"],
-        "Custom Rules": ["Brandy Kendle (ID 1242) Rate-to-Component Mapping"],
+        "Output Schema": STANDARD_COLUMNS,
         "Active Session": st.session_state.get("name", "Unknown")
     })
