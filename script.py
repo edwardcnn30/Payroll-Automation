@@ -623,7 +623,16 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
     all_raw_rows = []
 
-    valid_hospice_rates = {
+    # Standard rates for general staff (Hourly, Routine Visit, Start of Care)
+    general_hospice_rates = {
+        80.00: "Hourly",
+        45.00: "Hourly",
+        90.00: "Routine Visit",
+        185.00: "Start of Care",
+    }
+
+    # Exclusive rates for Brandy (Includes On Call Weekdays & Weekends)
+    brandy_hospice_rates = {
         80.00: "Hourly",
         50.00: "On call Weekdays",
         100.00: "On call Weekends",
@@ -692,6 +701,10 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 display_name = matched_name if matched_name else clean_file_name
                 labor_override = display_name
 
+                # Determine if employee is Brandy to apply On-Call exclusive pay components
+                is_brandy = "brandy" in display_name.lower()
+                active_rate_dict = brandy_hospice_rates if is_brandy else general_hospice_rates
+
                 hours_row_idx = -1
                 rate_row_idx = -1
                 miles_val = 0.0
@@ -733,13 +746,13 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                             if 0 < hrs_val <= 24:
                                 if rate_val == 0.73:
                                     mileage_units_list.append(hrs_val)
-                                elif rate_val in valid_hospice_rates:
+                                elif rate_val in active_rate_dict:
                                     rate_hours_list.append((rate_val, hrs_val))
                         except:
                             pass
 
                 for rate, hours in rate_hours_list:
-                    pay_comp = valid_hospice_rates[rate]
+                    pay_comp = active_rate_dict[rate]
                     all_raw_rows.append({
                         "Review": "✅ Validated",
                         "Client ID": 16068715,
