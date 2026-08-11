@@ -385,15 +385,31 @@ def process_home_health_payroll(df):
 def process_home_care_payroll(df):
     df = sanitize_columns(df)
 
-    id_col = df.columns[4] if len(df.columns) > 4 else (df.columns[1] if len(df.columns) > 1 else df.columns[0])
-    name_col = df.columns[3] if len(df.columns) > 3 else df.columns[0]
+    # --- ROBUST DYNAMIC HEADER SEARCH FOR HOME CARE ---
+    id_col = None
+    name_col = None
+    for col in df.columns:
+        c_lower = col.lower()
+        if not id_col and any(k in c_lower for k in ["worker id", "emp id", "employee id", "id", "staff id"]):
+            id_col = col
+        if not name_col and any(k in c_lower for k in ["employee", "worker", "staff", "name"]):
+            name_col = col
+
+    # Fallback to positional indices if explicit header names aren't found
+    if not id_col:
+        id_col = df.columns[4] if len(df.columns) > 4 else (df.columns[1] if len(df.columns) > 1 else df.columns[0])
+    if not name_col:
+        name_col = df.columns[3] if len(df.columns) > 3 else df.columns[0]
 
     if "Hours" not in df.columns:
-        df["Hours"] = 0.0
+        h_match = next((c for c in df.columns if "hour" in c.lower()), None)
+        df["Hours"] = df[h_match] if h_match else 0.0
     if "Rate" not in df.columns:
-        df["Rate"] = 0.0
+        r_match = next((c for c in df.columns if "rate" in c.lower()), None)
+        df["Rate"] = df[r_match] if r_match else 0.0
     if "Pay Component" not in df.columns:
-        df["Pay Component"] = ""
+        p_match = next((c for c in df.columns if any(k in c.lower() for k in ["component", "type", "description"])), None)
+        df["Pay Component"] = df[p_match] if p_match else ""
 
     df["Hours"] = pd.to_numeric(df["Hours"], errors="coerce").fillna(0)
     df["Rate"] = pd.to_numeric(df["Rate"], errors="coerce").fillna(0)
@@ -575,171 +591,172 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
         10.00: "Hourly"
     }
 
-    for ts_file in timesheet_files:
-        try:
-            xls = pd.ExcelFile(ts_file)
-            df_ts = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None)
+    if timesheet_files:
+        for ts_file in timesheet_files:
+            try:
+                xls = pd.ExcelFile(ts_file)
+                df_ts = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None)
 
-            file_base = ts_file.name.split(".")[0]
-            file_lower = file_base.lower()
+                file_base = ts_file.name.split(".")[0]
+                file_lower = file_base.lower()
 
-            ts_employee_name = ""
-            for r_idx in range(min(5, len(df_ts))):
-                for c_idx in range(len(df_ts.columns)):
-                    cell_val = str(df_ts.iloc[r_idx, c_idx]).strip()
-                    if cell_val and cell_val.lower() not in ["nan", "none", "employee", "name", "worker", "client"]:
-                        for k in id_mapping.keys():
-                            if k in cell_val.lower() or cell_val.lower() in k:
-                                ts_employee_name = k
+                ts_employee_name = ""
+                for r_idx in range(min(5, len(df_ts))):
+                    for c_idx in range(len(df_ts.columns)):
+                        cell_val = str(df_ts.iloc[r_idx, c_idx]).strip()
+                        if cell_val and cell_val.lower() not in ["nan", "none", "employee", "name", "worker", "client"]:
+                            for k in id_mapping.keys():
+                                if k in cell_val.lower() or cell_val.lower() in k:
+                                    ts_employee_name = k
+                                    break
+                            if ts_employee_name:
                                 break
-                        if ts_employee_name:
-                            break
-                if ts_employee_name:
-                    break
+                    if ts_employee_name:
+                        break
 
-            def resolve_worker_id(search_target):
-                target_lower = str(search_target).lower()
-                for k, v in id_mapping.items():
-                    if k in target_lower or target_lower in k:
-                        return v, k
+                def resolve_worker_id(search_target):
+                    target_lower = str(search_target).lower()
+                    for k, v in id_mapping.items():
+                        if k in target_lower or target_lower in k:
+                            return v, k
 
-                target_tokens = set(re.findall(r"\b[a-z]{3,}\b", target_lower))
-                best_id = None
-                best_key = ""
-                max_overlap = 0
+                    target_tokens = set(re.findall(r"\b[a-z]{3,}\b", target_lower))
+                    best_id = None
+                    best_key = ""
+                    max_overlap = 0
 
-                for k, v in id_mapping.items():
-                    key_tokens = set(re.findall(r"\b[a-z]{3,}\b", k))
-                    overlap = len(target_tokens.intersection(key_tokens))
-                    if overlap > max_overlap:
-                        max_overlap = overlap
-                        best_id = v
-                        best_key = k
+                    for k, v in id_mapping.items():
+                        key_tokens = set(re.findall(r"\b[a-z]{3,}\b", k))
+                        overlap = len(target_tokens.intersection(key_tokens))
+                        if overlap > max_overlap:
+                            max_overlap = overlap
+                            best_id = v
+                            best_key = k
 
-                if max_overlap > 0:
-                    return best_id, best_key
-                return None, ""
+                    if max_overlap > 0:
+                        return best_id, best_key
+                    return None, ""
 
-            worker_id, matched_key = resolve_worker_id(ts_employee_name)
-            if not worker_id:
-                worker_id, matched_key = resolve_worker_id(file_lower)
+                worker_id, matched_key = resolve_worker_id(ts_employee_name)
+                if not worker_id:
+                    worker_id, matched_key = resolve_worker_id(file_lower)
 
-            if not worker_id:
-                continue
+                if not worker_id:
+                    continue
 
-            formatted_worker_id = int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace(".", "", 1).isdigit() else worker_id
+                formatted_worker_id = int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace(".", "", 1).isdigit() else worker_id
 
-            if formatted_worker_id in name_mapping:
-                display_name = name_mapping[formatted_worker_id]
-            else:
-                display_name = matched_key.title() if matched_key else (ts_employee_name.title() if ts_employee_name else file_base)
+                if formatted_worker_id in name_mapping:
+                    display_name = name_mapping[formatted_worker_id]
+                else:
+                    display_name = matched_key.title() if matched_key else (ts_employee_name.title() if ts_employee_name else file_base)
 
-            labor_override = display_name
+                labor_override = display_name
 
-            hours_row_idx = -1
-            rate_row_idx = -1
-            miles_val = 0.0
+                hours_row_idx = -1
+                rate_row_idx = -1
+                miles_val = 0.0
 
-            for r_idx in range(len(df_ts)):
-                row_vals = [str(df_ts.iloc[r_idx, c]).strip().lower() for c in range(len(df_ts.columns))]
-                row_str = " ".join(row_vals)
+                for r_idx in range(len(df_ts)):
+                    row_vals = [str(df_ts.iloc[r_idx, c]).strip().lower() for c in range(len(df_ts.columns))]
+                    row_str = " ".join(row_vals)
 
-                if "total hrs" in row_str or "total hours" in row_str:
-                    hours_row_idx = r_idx
-                if "hourly rate" in row_str or "rate" in row_str:
-                    rate_row_idx = r_idx
+                    if "total hrs" in row_str or "total hours" in row_str:
+                        hours_row_idx = r_idx
+                    if "hourly rate" in row_str or "rate" in row_str:
+                        rate_row_idx = r_idx
 
-                if "miles" in row_str or "mileage" in row_str:
-                    for c_idx, val in enumerate(row_vals):
-                        if val == "" or val == "nan":
-                            continue
+                    if "miles" in row_str or "mileage" in row_str:
+                        for c_idx, val in enumerate(row_vals):
+                            if val == "" or val == "nan":
+                                continue
+                            try:
+                                f_val = float(df_ts.iloc[r_idx, c_idx])
+                                if 0 < f_val < 500:
+                                    miles_val = max(miles_val, f_val)
+                            except:
+                                pass
+
+                rate_hours_list = []
+                mileage_units_list = []
+
+                if hours_row_idx != -1 and rate_row_idx != -1:
+                    for c_idx in range(len(df_ts.columns)):
+                        hrs_cell = df_ts.iloc[hours_row_idx, c_idx]
+                        rate_cell = df_ts.iloc[rate_row_idx, c_idx]
+
                         try:
-                            f_val = float(df_ts.iloc[r_idx, c_idx])
-                            if 0 < f_val < 500:
-                                miles_val = max(miles_val, f_val)
+                            hrs_val = float(hrs_cell)
+                            rate_val = float(str(rate_cell).replace("$", "").strip())
+                            if hrs_val > 0 and rate_val > 0:
+                                if rate_val == 0.73:
+                                    mileage_units_list.append(hrs_val)
+                                else:
+                                    rate_hours_list.append((rate_val, hrs_val))
                         except:
                             pass
 
-            rate_hours_list = []
-            mileage_units_list = []
+                if not rate_hours_list and not mileage_units_list:
+                    rate_hours_list = [(50.0, 40.0)]
 
-            if hours_row_idx != -1 and rate_row_idx != -1:
-                for c_idx in range(len(df_ts.columns)):
-                    hrs_cell = df_ts.iloc[hours_row_idx, c_idx]
-                    rate_cell = df_ts.iloc[rate_row_idx, c_idx]
+                is_brandy = (formatted_worker_id == 1242) or ("brandy" in str(matched_key).lower()) or ("kendle" in str(matched_key).lower())
 
-                    try:
-                        hrs_val = float(hrs_cell)
-                        rate_val = float(str(rate_cell).replace("$", "").strip())
-                        if hrs_val > 0 and rate_val > 0:
-                            if rate_val == 0.73:
-                                mileage_units_list.append(hrs_val)
-                            else:
-                                rate_hours_list.append((rate_val, hrs_val))
-                    except:
-                        pass
+                for rate, hours in rate_hours_list:
+                    if is_brandy and rate in brandy_rate_component_map:
+                        pay_comp = brandy_rate_component_map[rate]
+                    else:
+                        pay_comp = "Hourly"
 
-            if not rate_hours_list and not mileage_units_list:
-                rate_hours_list = [(50.0, 40.0)]
+                    all_raw_rows.append({
+                        "Review": "✅ Validated",
+                        "Client ID": 16068715,
+                        "Worker ID": formatted_worker_id,
+                        "Org": "",
+                        "Job Number": "",
+                        "Pay Component": pay_comp,
+                        "Rate": rate,
+                        "Rate Number": "",
+                        "Hours": hours,
+                        "Units": "",
+                        "Line Date": "",
+                        "Amount": "",
+                        "Check Seq Number": "",
+                        "Override State": "",
+                        "Override Local": "",
+                        "Override Local Jurisdiction": "",
+                        "Labor Override": labor_override,
+                        "_EmployeeName": display_name,
+                    })
 
-            is_brandy = (formatted_worker_id == 1242) or ("brandy" in str(matched_key).lower()) or ("kendle" in str(matched_key).lower())
+                total_miles = miles_val + sum(mileage_units_list)
+                if total_miles > 0:
+                    all_raw_rows.append({
+                        "Review": "✅ Validated",
+                        "Client ID": 16068715,
+                        "Worker ID": formatted_worker_id,
+                        "Org": "",
+                        "Job Number": "",
+                        "Pay Component": "MILEAGE REIMB",
+                        "Rate": 0.73,
+                        "Rate Number": "",
+                        "Hours": "",
+                        "Units": total_miles,
+                        "Line Date": "",
+                        "Amount": "",
+                        "Check Seq Number": "",
+                        "Override State": "",
+                        "Override Local": "",
+                        "Override Local Jurisdiction": "",
+                        "Labor Override": labor_override,
+                        "_EmployeeName": display_name,
+                    })
 
-            for rate, hours in rate_hours_list:
-                if is_brandy and rate in brandy_rate_component_map:
-                    pay_comp = brandy_rate_component_map[rate]
-                else:
-                    pay_comp = "Hourly"
+                if matched_key in prn_points_by_employee:
+                    for prn_row in prn_points_by_employee[matched_key]:
+                        all_raw_rows.append(prn_row)
 
-                all_raw_rows.append({
-                    "Review": "✅ Validated",
-                    "Client ID": 16068715,
-                    "Worker ID": formatted_worker_id,
-                    "Org": "",
-                    "Job Number": "",
-                    "Pay Component": pay_comp,
-                    "Rate": rate,
-                    "Rate Number": "",
-                    "Hours": hours,
-                    "Units": "",
-                    "Line Date": "",
-                    "Amount": "",
-                    "Check Seq Number": "",
-                    "Override State": "",
-                    "Override Local": "",
-                    "Override Local Jurisdiction": "",
-                    "Labor Override": labor_override,
-                    "_EmployeeName": display_name,
-                })
-
-            total_miles = miles_val + sum(mileage_units_list)
-            if total_miles > 0:
-                all_raw_rows.append({
-                    "Review": "✅ Validated",
-                    "Client ID": 16068715,
-                    "Worker ID": formatted_worker_id,
-                    "Org": "",
-                    "Job Number": "",
-                    "Pay Component": "MILEAGE REIMB",
-                    "Rate": 0.73,
-                    "Rate Number": "",
-                    "Hours": "",
-                    "Units": total_miles,
-                    "Line Date": "",
-                    "Amount": "",
-                    "Check Seq Number": "",
-                    "Override State": "",
-                    "Override Local": "",
-                    "Override Local Jurisdiction": "",
-                    "Labor Override": labor_override,
-                    "_EmployeeName": display_name,
-                })
-
-            if matched_key in prn_points_by_employee:
-                for prn_row in prn_points_by_employee[matched_key]:
-                    all_raw_rows.append(prn_row)
-
-        except Exception as e:
-            st.error(f"Error parsing timesheet {ts_file.name}: {e}")
+            except Exception as e:
+                st.error(f"Error parsing timesheet {ts_file.name}: {e}")
 
     return aggregate_and_standardize(all_raw_rows)
 
