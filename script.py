@@ -215,7 +215,6 @@ def aggregate_and_standardize(df_rows):
         if col not in temp_df.columns:
             temp_df[col] = ""
 
-    # Ensure numeric types for aggregation
     temp_df["Hours"] = pd.to_numeric(temp_df["Hours"], errors="coerce").fillna(0)
     temp_df["Units"] = pd.to_numeric(temp_df["Units"], errors="coerce").fillna(0)
     temp_df["Amount"] = pd.to_numeric(temp_df["Amount"], errors="coerce").fillna(0)
@@ -270,8 +269,8 @@ def aggregate_and_standardize(df_rows):
 def process_home_health_payroll(df):
     df.columns = [str(c).strip() for c in df.columns]
 
-    # Column D (index 3) is Employee Name -> Labor Override
-    # Column E (index 4) is Employee ID -> Worker ID
+    # Column D (index 3) = Employee Name -> Labor Override
+    # Column E (index 4) = Employee ID -> Worker ID
     name_col = df.columns[3] if len(df.columns) > 3 else df.columns[0]
     id_col = df.columns[4] if len(df.columns) > 4 else (df.columns[1] if len(df.columns) > 1 else df.columns[0])
 
@@ -371,39 +370,12 @@ def process_home_health_payroll(df):
 def process_home_care_payroll(df):
     df.columns = [str(c).strip() for c in df.columns]
 
-    col_map = {}
-    used_targets = set()
-    for c in df.columns:
-        c_lower = c.lower()
-        target = None
-        if "worker" in c_lower and "id" in c_lower:
-            target = "Worker ID"
-        elif "employee" in c_lower or ("name" in c_lower and "client" not in c_lower):
-            target = "Employee"
-        elif "component" in c_lower or "pay comp" in c_lower:
-            target = "Pay Component"
-        elif "rate" in c_lower:
-            target = "Rate"
-        elif "hour" in c_lower:
-            target = "Hours"
-        elif "amount" in c_lower:
-            target = "Amount"
-        elif "unit" in c_lower:
-            target = "Units"
-        elif "client" in c_lower and "id" in c_lower:
-            target = "Client ID"
-        elif "labor" in c_lower or "override" in c_lower:
-            target = "Labor Override"
+    # Column D (index 3) = Employee Name -> Labor Override
+    # Column E (index 4) = Employee ID -> Worker ID
+    id_col = df.columns[4] if len(df.columns) > 4 else (df.columns[1] if len(df.columns) > 1 else df.columns[0])
+    name_col = df.columns[3] if len(df.columns) > 3 else df.columns[0]
 
-        if target and target not in used_targets:
-            col_map[c] = target
-            used_targets.add(target)
-
-    df = df.rename(columns=col_map)
-
-    if "Worker ID" not in df.columns:
-        id_col = next((c for c in df.columns if "id" in c.lower()), df.columns[0])
-        df = df.rename(columns={id_col: "Worker ID"})
+    df = df.rename(columns={id_col: "Worker ID", name_col: "Employee"})
 
     if "Hours" not in df.columns:
         df["Hours"] = 0.0
@@ -411,8 +383,6 @@ def process_home_care_payroll(df):
         df["Rate"] = 0.0
     if "Pay Component" not in df.columns:
         df["Pay Component"] = ""
-    if "Employee" not in df.columns:
-        df["Employee"] = ""
 
     df["Hours"] = pd.to_numeric(df["Hours"], errors="coerce").fillna(0)
     df["Rate"] = pd.to_numeric(df["Rate"], errors="coerce").fillna(0)
@@ -527,19 +497,11 @@ def process_home_care_payroll(df):
 
 
 def process_hospice_reconciliation(hh_file, timesheet_files):
-    authoritative_id_map = {
-        "simowski, maggie": 1162, "maggie simowski": 1162, "maggies": 1162, "maggie": 1162, "simowski": 1162,
-        "cecil, katherine": 1351, "katherine cecil": 1351, "katherines": 1351, "katherine": 1351, "cecil": 1351,
-        "cooper, jenifer": 1414, "jenifer cooper": 1414, "coopers": 1414, "cooper": 1414, "jenifer": 1414,
-        "smith, gene": 1175, "gene smith": 1175, "smith": 1175, "gene": 1175,
-        "kendle, alexias b (brandy)": 1242, "alexias kendle": 1242, "brandy": 1242, "brandys": 1242, "alexias": 1242, "kendle": 1242,
-        "escobar ortega, ana m": 1388, "ana m escobar ortega": 1388, "ana": 1388, "ana e": 1388, "escobar": 1388,
-        "bullock, monica": 1300, "monica bullock": 1300, "bullock": 1300, "monica": 1300
-    }
-
-    id_mapping = authoritative_id_map.copy()
+    id_mapping = {}
     name_mapping = {}
+    prn_points_by_employee = {}
 
+    # 1. Parse Raw File (Master): map names (Col D) to IDs (Col E), and extract dedicated PRN Points
     if hh_file is not None:
         try:
             df_raw = pd.read_excel(hh_file, header=None) if not hasattr(hh_file, "name") or not hh_file.name.endswith(".csv") else pd.read_csv(hh_file, header=None)
@@ -553,7 +515,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
             hh_df = pd.read_csv(hh_file, skiprows=header_row_idx) if hasattr(hh_file, "name") and hh_file.name.endswith(".csv") else pd.read_excel(hh_file, header=header_row_idx)
             hh_df.columns = [str(c).strip() for c in hh_df.columns]
 
-            # Column D (index 3) is Employee Name, Column E (index 4) is Employee ID
+            # Column D (index 3) = Employee Name, Column E (index 4) = Employee ID
             name_col = hh_df.columns[3] if len(hh_df.columns) > 3 else hh_df.columns[0]
             id_col = hh_df.columns[4] if len(hh_df.columns) > 4 else hh_df.columns[1]
 
@@ -564,6 +526,32 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 if emp_name and pd.notnull(emp_id):
                     id_mapping[emp_name] = emp_id
                     name_mapping[emp_id] = str(emp_name_raw).strip()
+
+                # Check for PRN Points or amount entries in raw file to retain
+                amount_val = float(row.get("Amount", 0)) if pd.notnull(row.get("Amount")) and str(row.get("Amount")).replace(".", "", 1).isdigit() else 0.0
+                if amount_val > 0 and emp_name:
+                    if emp_name not in prn_points_by_employee:
+                        prn_points_by_employee[emp_name] = []
+                    prn_points_by_employee[emp_name].append({
+                        "Review": "✅ Validated",
+                        "Client ID": 16068715,
+                        "Worker ID": emp_id,
+                        "Org": "",
+                        "Job Number": "",
+                        "Pay Component": "PRN Points",
+                        "Rate": "",
+                        "Rate Number": "",
+                        "Hours": "",
+                        "Units": "",
+                        "Line Date": "",
+                        "Amount": amount_val,
+                        "Check Seq Number": "",
+                        "Override State": "",
+                        "Override Local": "",
+                        "Override Local Jurisdiction": "",
+                        "Labor Override": str(emp_name_raw).strip(),
+                        "_EmployeeName": str(emp_name_raw).strip(),
+                    })
         except Exception:
             pass
 
@@ -579,6 +567,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
         10.00: "Hourly"
     }
 
+    # 2. Process timesheets (CATCH ONLY THOSE FROM TIMESHEETS, replacing raw hourly data while keeping timesheet data + PRN points)
     for ts_file in timesheet_files:
         try:
             xls = pd.ExcelFile(ts_file)
@@ -627,6 +616,9 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
             worker_id, matched_key = resolve_worker_id(ts_employee_name)
             if not worker_id:
                 worker_id, matched_key = resolve_worker_id(file_lower)
+
+            if not worker_id:
+                continue
 
             formatted_worker_id = int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace(".", "", 1).isdigit() else worker_id
 
@@ -685,6 +677,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
             is_brandy = (formatted_worker_id == 1242) or ("brandy" in str(matched_key).lower()) or ("kendle" in str(matched_key).lower())
 
+            # Append Timesheet Data (replacing raw hourly data)
             for rate, hours in rate_hours_list:
                 if is_brandy and rate in brandy_rate_component_map:
                     pay_comp = brandy_rate_component_map[rate]
@@ -734,6 +727,11 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     "Labor Override": labor_override,
                     "_EmployeeName": display_name,
                 })
+
+            # Append dedicated PRN Points from the master raw file for this matching name if available
+            if matched_key in prn_points_by_employee:
+                for prn_row in prn_points_by_employee[matched_key]:
+                    all_raw_rows.append(prn_row)
 
         except Exception as e:
             st.error(f"Error parsing timesheet {ts_file.name}: {e}")
@@ -923,7 +921,7 @@ elif current_tab == "Multi-LOB Batch":
                     res_df = process_home_care_payroll(df)
                     all_batch_rows.append(res_df)
                 except Exception as e:
-                    st.error(f"Error in {f.name}: {e}")
+                    st.error(f5"Error in {f.name}: {e}")
 
         if hospice_batch_files:
             try:
