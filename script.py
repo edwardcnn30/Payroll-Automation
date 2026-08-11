@@ -1,6 +1,5 @@
 import io
 import re
-import bcrypt
 import pandas as pd
 import streamlit as st
 import streamlit_authenticator as stauth
@@ -10,24 +9,22 @@ st.set_page_config(
     page_title="Payroll Studio Enterprise", page_icon="💼", layout="wide"
 )
 
-# --- DYNAMIC CREDENTIALS & AUTHENTICATOR SETUP ---
-hashed_password = bcrypt.hashpw("123".encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
+# --- AUTHENTICATION SETUP USING ST.SECRETS ---
 credentials = {
     "usernames": {
-        "admin": {
-            "email": "admin@payrollstudio.com",
-            "name": "Administrator",
-            "password": hashed_password,
+        "edwardcnn30": {
+            "email": st.secrets["credentials"]["usernames"]["edwardcnn30"]["email"],
+            "name": st.secrets["credentials"]["usernames"]["edwardcnn30"]["name"],
+            "password": st.secrets["credentials"]["usernames"]["edwardcnn30"]["password"],
         }
     }
 }
 
 authenticator = stauth.Authenticate(
     credentials,
-    "payroll_studio_auth",
-    "random_signature_key_here",
-    expiry_days=30,
+    st.secrets["COOKIE_NAME"],
+    st.secrets["COOKIE_KEY"],
+    cookie_expiry_days=st.secrets["COOKIE_EXPIRY_DAYS"],
 )
 
 # Render login widget in the main page area
@@ -1038,7 +1035,7 @@ elif current_tab == "Developer Support":
     st.markdown("## 🛠️ Developer & Compliance Support")
     st.write("System status, error logs, and regulatory rule sets active in Payroll Studio Enterprise.")
     st.json({
-        "Authentication Module": "Streamlit-Authenticator (Bcrypt Hashing)",
+        "Authentication Module": "Streamlit-Authenticator (Bcrypt Hashing) - edwardcnn30",
         "Overtime Policy": "80-hour threshold weekly standard split",
         "Mileage Rate": "0.73 Standard IRS/Client Reimb",
         "Supported LOBs": ["Home Health", "Home Care", "Hospice Reconciliation"],
