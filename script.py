@@ -176,7 +176,7 @@ def sanitize_columns(df):
     return df
 
 
-# --- HELPER: ROBUST TASK, UNITS & RATE PARSER FOR PRN / VISIT STAFF ---
+# --- HELPER: ROBUST TASK & RATE CALCULATION FOR PRN / VISIT STAFF ---
 def extract_task_amounts_for_df(df, id_col, name_col):
     df = sanitize_columns(df)
 
@@ -185,8 +185,8 @@ def extract_task_amounts_for_df(df, id_col, name_col):
         None)
     units_col = next(
         (c for c in df.columns if any(k in c.lower() for k in ["unit", "count", "qty", "quantity", "hours"])), None)
-    rate_col = next((c for c in df.columns if any(k in c.lower() for k in ["rate", "pay rate", "fee"])), None)
-    amt_col = next((c for c in df.columns if any(k in c.lower() for k in ["amount", "total", "charge", "price"])), None)
+    rate_col = next(
+        (c for c in df.columns if any(k in c.lower() for k in ["rate", "pay rate", "fee", "amount", "total"])), None)
 
     results = []
     grouped = df.groupby([id_col, df[name_col].astype(str)], dropna=False)
@@ -200,52 +200,48 @@ def extract_task_amounts_for_df(df, id_col, name_col):
         formatted_worker_id = int(emp_id) if isinstance(emp_id, float) and emp_id.is_integer() else emp_id
 
         for _, row in group.iterrows():
-            units = 1.0
-            if units_col and pd.notnull(row.get(units_col)):
-                try:
-                    units = float(str(row.get(units_col)).replace(",", "").strip())
-                except:
-                    units = 1.0
+            task_name = str(row.get(task_col, "")) if task_col and pd.notnull(row.get(task_col)) else ""
 
-            rate_val = 0.0
-            if rate_col and pd.notnull(row.get(rate_col)):
-                try:
-                    rate_val = float(str(row.get(rate_col)).replace("$", "").replace(",", "").strip())
-                except:
-                    rate_val = 0.0
+            # As long as it is on the task, compute units * rate
+            if task_name and task_name.lower() not in ["nan", "none", ""]:
+                units = 1.0
+                if units_col and pd.notnull(row.get(units_col)):
+                    try:
+                        units = float(str(row.get(units_col)).replace(",", "").strip())
+                    except:
+                        units = 1.0
 
-            amt_val = 0.0
-            if amt_col and pd.notnull(row.get(amt_col)):
-                try:
-                    amt_val = float(str(row.get(amt_col)).replace("$", "").replace(",", "").strip())
-                except:
-                    amt_val = 0.0
+                rate_val = 0.0
+                if rate_col and pd.notnull(row.get(rate_col)):
+                    try:
+                        rate_val = float(str(row.get(rate_col)).replace("$", "").replace(",", "").strip())
+                    except:
+                        rate_val = 0.0
 
-            total_item_amt = amt_val if amt_val > 0 else (units * rate_val)
+                total_item_amt = units * rate_val
 
-            if total_item_amt == 0:
-                for c in df.columns:
-                    if c not in [id_col, name_col, task_col, units_col]:
-                        val = row.get(c)
-                        if pd.notnull(val):
-                            s = str(val).replace("$", "").replace(",", "").strip()
-                            try:
-                                f = float(s)
-                                if 0 < f < 10000:
-                                    total_item_amt = f
-                                    break
-                            except:
-                                pass
+                if total_item_amt == 0:
+                    for c in df.columns:
+                        if c not in [id_col, name_col, task_col, units_col]:
+                            val = row.get(c)
+                            if pd.notnull(val):
+                                s = str(val).replace("$", "").replace(",", "").strip()
+                                try:
+                                    f = float(s)
+                                    if 0 < f < 10000:
+                                        total_item_amt = f
+                                        break
+                                except:
+                                    pass
 
-            if total_item_amt > 0:
-                task_name = str(row.get(task_col, "")) if task_col and pd.notnull(row.get(task_col)) else ""
-                results.append({
-                    "emp_id": formatted_worker_id,
-                    "emp_name": str(emp_name).strip(),
-                    "emp_name_lower": str(emp_name).strip().lower(),
-                    "task": task_name,
-                    "amount": total_item_amt
-                })
+                if total_item_amt > 0:
+                    results.append({
+                        "emp_id": formatted_worker_id,
+                        "emp_name": str(emp_name).strip(),
+                        "emp_name_lower": str(emp_name).strip().lower(),
+                        "task": task_name,
+                        "amount": total_item_amt
+                    })
     return results
 
 
