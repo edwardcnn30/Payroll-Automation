@@ -1,3 +1,4 @@
+import traceback
 import pandas as pd
 import streamlit as st
 
@@ -39,12 +40,6 @@ if not st.session_state.authenticated:
 # ==========================================
 
 def process_home_health_standalone(df):
-    """
-    Tier 2: Standalone Home Health Engine (Hardened Type-Safe Version)
-    - Normalizes Employee ID from Column E to prevent type-mismatch leaks.
-    - Strictly blocks Hourly and Salaried-Hourly staff (such as ID 1280, 1388) from PRN points.
-    - Enforces 80-hour OT rule and 0.73 mileage.
-    """
     df.columns = [str(c).strip() for c in df.columns]
     emp_id_col = df.columns[4] if len(df.columns) > 4 else df.columns[0]
     name_col = next((c for c in df.columns if any(k in c.lower() for k in ["name", "employee", "worker"])),
@@ -56,7 +51,6 @@ def process_home_health_standalone(df):
     if "Mileage" not in df.columns:
         df["Mileage"] = 0.0
 
-    # Strict Roster of Hourly / Salaried-Hourly IDs (Normalized as strings for zero-fail matching)
     HOURLY_TARGET_IDS = {"1389", "1351", "1388", "1162", "1280"}
     HOURLY_RATES = {
         "1389": 40.00,
@@ -203,7 +197,6 @@ def process_home_health_standalone(df):
 
 
 def process_home_care_engine(df):
-    """Tier 3: Home Care Engine"""
     df.columns = [str(c).strip() for c in df.columns]
     raw_rows = []
 
@@ -254,28 +247,29 @@ def process_home_care_engine(df):
 
 
 # ==========================================
-# MAIN APP NAVIGATION & UI INTERFACE
+# SAFE MAIN APPLICATION WRAPPER & UI INTERFACE
 # ==========================================
-st.title("💼 Payroll Studio Enterprise - Unified Multi-LOB Engine")
-st.markdown("---")
+try:
+    st.title("💼 Payroll Studio Enterprise - Unified Multi-LOB Engine")
+    st.markdown("---")
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 Multi-LOB Batch Processor",
-    "🩺 Home Health Studio",
-    "🏠 Home Care Studio",
-    "🕊️ Hospice Reconciliation"
-])
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📊 Multi-LOB Batch Processor",
+        "🩺 Home Health Studio",
+        "🏠 Home Care Studio",
+        "🕊️ Hospice Reconciliation"
+    ])
 
-with tab1:
-    st.subheader("Multi-LOB Execution Pipeline (DAG Sequence)")
-    st.info("Hierarchy Active: Standalone Home Health (Strict ID Filtering) ➔ Home Care. Global 80-Hour Rule Enforced.")
+    with tab1:
+        st.subheader("Multi-LOB Execution Pipeline (DAG Sequence)")
+        st.info(
+            "Hierarchy Active: Standalone Home Health (Strict ID Filtering) ➔ Home Care. Global 80-Hour Rule Enforced.")
 
-    hh_file = st.file_uploader("Upload Home Health Raw Master (.csv / .xlsx)", type=["csv", "xlsx"])
-    hc_file = st.file_uploader("Upload Home Care File (.csv / .xlsx)", type=["csv", "xlsx"])
+        hh_file = st.file_uploader("Upload Home Health Raw Master (.csv / .xlsx)", type=["csv", "xlsx"])
+        hc_file = st.file_uploader("Upload Home Care File (.csv / .xlsx)", type=["csv", "xlsx"])
 
-    if st.button("Execute Unified Multi-LOB Run"):
-        if hh_file or hc_file:
-            try:
+        if st.button("Execute Unified Multi-LOB Run"):
+            if hh_file or hc_file:
                 with st.spinner("Processing enterprise multi-LOB pipeline..."):
                     master_output_frames = []
                     if hh_file:
@@ -293,28 +287,29 @@ with tab1:
                         st.session_state.processed_df = pd.concat(master_output_frames, ignore_index=True)
                         st.success("Unified Batch Execution Completed Successfully!")
                         st.dataframe(st.session_state.processed_df)
-            except Exception as e:
-                st.error(f"❌ Pipeline Execution Failed: {str(e)}")
-                st.warning("Check your raw file column headers and data formats against the expected template.")
-        else:
-            st.error("Please upload at least one operational file.")
+            else:
+                st.error("Please upload at least one operational file.")
 
-    if st.session_state.processed_df is not None:
-        st.download_button(
-            "Download Consolidated Payroll Output",
-            data=st.session_state.processed_df.to_csv(index=False).encode("utf-8"),
-            file_name="Master_Unified_Payroll_Output.csv",
-            mime="text/css" if False else "text/csv"
-        )
+        if st.session_state.processed_df is not None:
+            st.download_button(
+                "Download Consolidated Payroll Output",
+                data=st.session_state.processed_df.to_csv(index=False).encode("utf-8"),
+                file_name="Master_Unified_Payroll_Output.csv",
+                mime="text/csv"
+            )
 
-with tab2:
-    st.subheader("Home Health Standalone Module Configuration")
-    st.write("Validates Column E ID mapping, zero-drop PRN points, and blocked salaried-hourly IDs.")
+    with tab2:
+        st.subheader("Home Health Standalone Module Configuration")
+        st.write("Validates Column E ID mapping, zero-drop PRN points, and blocked salaried-hourly IDs.")
 
-with tab3:
-    st.subheader("Home Care Paychex Module Configuration")
-    st.write("Validates missing IDs, blank component fallback to Overtime, and 80-hour split.")
+    with tab3:
+        st.subheader("Home Care Paychex Module Configuration")
+        st.write("Validates missing IDs, blank component fallback to Overtime, and 80-hour split.")
 
-with tab4:
-    st.subheader("Hospice Timesheet Reconciliation Module")
-    st.write("Manages Brandy & Cooper on-call logic and cross-over PRN retention.")
+    with tab4:
+        st.subheader("Hospice Timesheet Reconciliation Module")
+        st.write("Manages Brandy & Cooper on-call logic and cross-over PRN retention.")
+
+except Exception as e:
+    st.error("🚨 Critical Runtime Exception Caught:")
+    st.code(traceback.format_exc())
