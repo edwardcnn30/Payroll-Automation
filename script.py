@@ -262,6 +262,8 @@ def aggregate_and_standardize(df_rows):
         return empty_df
 
     temp_df = pd.DataFrame(df_rows)
+    temp_df = sanitize_columns(temp_df)
+
     for col in PAYCHEX_TEMPLATE_COLUMNS:
         if col not in temp_df.columns:
             temp_df[col] = ""
@@ -347,6 +349,7 @@ def aggregate_and_standardize(df_rows):
         if col not in agg_df.columns:
             agg_df[col] = ""
 
+    agg_df = sanitize_columns(agg_df)
     return agg_df[PAYCHEX_TEMPLATE_COLUMNS]
 
 
@@ -693,7 +696,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 for _, row in group.iterrows():
                     task_name = str(row.get(task_col, "")) if task_col and pd.notnull(row.get(task_col)) else ""
                     if task_name and task_name.lower() not in ["nan", "none", ""]:
-                        # Brandy rule: Task column amount equals Rate column value regardless of description if on task
                         item_amt = 0.0
                         if rate_col and pd.notnull(row.get(rate_col)):
                             try:
