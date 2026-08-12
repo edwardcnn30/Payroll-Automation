@@ -31,6 +31,27 @@ HOSPICE_WORKER_IDS = {
     "Bullock, Monica": 1300,
 }
 
+# --- EMPLOYEE EXCLUSION LISTS ---
+NON_PRN_EMPLOYEES = {
+    "Cecil, Katherine",
+    "Decker, Greta",
+    "Higueara, Joaquin",
+    "Mostovych, Sophia",
+    "Poczekaj, Ashley",
+    "Ray, Melissa",
+    "Salvetti, Carleen",
+    "Schreiber, Jennifer",
+    "Solano, Cassie",
+    "Straud, Alejandra",
+    "Webb, Detrecia",
+    "Westfall, Neal",
+}
+
+MILEAGE_EXCLUSIONS = {
+    "Cecil, Katherine",
+    "Kendle, Alexias B (Brandy)",
+}
+
 # --- NATIVE SECURE AUTHENTICATION SYSTEM (PERSISTENT) ---
 if not st.session_state["authenticated"]:
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -195,7 +216,7 @@ def sanitize_columns(df):
     return df
 
 
-# --- HELPER: STANDARD HOME HEALTH TASK & AMOUNT EXTRACTION (USING ROW AMOUNTS DIRECTLY) ---
+# --- HELPER: HOME HEALTH TASK & AMOUNT EXTRACTION (SKIPPING NON-PRN STAFF) ---
 def extract_home_health_tasks(df, id_col, name_col):
     df = sanitize_columns(df)
 
@@ -210,13 +231,18 @@ def extract_home_health_tasks(df, id_col, name_col):
     grouped = df.groupby([id_col, df[name_col].astype(str)], dropna=False)
 
     for (emp_id_raw, emp_name), group in grouped:
+        emp_name_str = str(emp_name).strip()
+
+        # Rule: Salaried/Hourly employees do not get PRN Points and are omitted from this table
+        if emp_name_str in NON_PRN_EMPLOYEES:
+            continue
+
         try:
             emp_id = float(emp_id_raw) if pd.notnull(emp_id_raw) and str(emp_id_raw).replace(".", "",
                                                                                              1).isdigit() else emp_id_raw
         except:
             emp_id = emp_id_raw
 
-        emp_name_str = str(emp_name).strip()
         if emp_name_str in HOSPICE_WORKER_IDS:
             formatted_worker_id = HOSPICE_WORKER_IDS[emp_name_str]
         else:
@@ -301,7 +327,6 @@ def aggregate_and_standardize(df_rows):
     active_group_cols = [c for c in group_cols if c in temp_df.columns]
     agg_dict = {"Hours": "sum", "Units": "sum", "Amount": "sum"}
 
-    # FIX APPLIED HERE: using as_index=False avoids index column re-insertion collisions ('cannot insert Rate, already exists')
     if active_group_cols:
         agg_df = temp_df.groupby(active_group_cols, as_index=False, dropna=False).agg(agg_dict)
         if "Rate" not in active_group_cols and "Rate" in temp_df.columns:
@@ -416,7 +441,7 @@ def process_home_health_payroll(df, hospice_employee_names=None):
         total_employee_hours = 0.0
         total_employee_mileage = 0.0
         applied_rate = 0.0
-        is_hourly_emp = formatted_worker_id in hourly_rates or emp_id in hourly_rates
+        is_hourly_emp = formatted_worker_id in hourly_rates or emp_id in hourly_rates or emp_name_str in NON_PRN_EMPLOYEES
 
         for _, row in group.iterrows():
             hours = float(row.get(hours_col, 0)) if pd.notnull(row.get(hours_col)) and str(row.get(hours_col)).replace(
@@ -501,7 +526,11 @@ def process_home_health_payroll(df, hospice_employee_names=None):
                         "_LOB": "Home Health",
                     })
 
-        if total_employee_mileage > 0 and not is_hospice_staff:
+        # Rule: Mileage computed for salaried/hourly staff EXCEPT Cecil and Kendle (handled via Hospice Time Sheet)
+        is_mileage_excluded = emp_name_str in MILEAGE_EXCLUSIONS or any(
+            k in emp_name_str.lower() for k in ["cecil", "kendle"])
+
+        if total_employee_mileage > 0 and not is_hospice_staff and not is_mileage_excluded:
             raw_rows.append({
                 "Review": "✅ Validated",
                 "Client ID": 16068715,
@@ -718,6 +747,9 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
             for (emp_id_raw, emp_name), group in grouped:
                 emp_name_str = str(emp_name).strip()
                 emp_name_lower = emp_name_str.lower()
+
+                if emp_name_str in NON_PRN_EMPLOYEES:
+                    continue
 
                 if emp_name_str in HOSPICE_WORKER_IDS:
                     formatted_worker_id = HOSPICE_WORKER_IDS[emp_name_str]
