@@ -216,7 +216,7 @@ def sanitize_columns(df):
     return df
 
 
-# --- HELPER: HOME HEALTH TASK & AMOUNT EXTRACTION (SKIPPING NON-PRN STAFF) ---
+# --- HELPER: HOME HEALTH TASK & AMOUNT EXTRACTION (GLOBAL NON-PRN CHECK) ---
 def extract_home_health_tasks(df, id_col, name_col):
     df = sanitize_columns(df)
 
@@ -233,8 +233,8 @@ def extract_home_health_tasks(df, id_col, name_col):
     for (emp_id_raw, emp_name), group in grouped:
         emp_name_str = str(emp_name).strip()
 
-        # Rule: Salaried/Hourly employees do not get PRN Points and are omitted from this table
-        if emp_name_str in NON_PRN_EMPLOYEES:
+        # GLOBAL GUARD: Strict Exclusion Check for Salaried/Hourly employees
+        if emp_name_str in NON_PRN_EMPLOYEES or any(ex.lower() in emp_name_str.lower() for ex in NON_PRN_EMPLOYEES):
             continue
 
         try:
@@ -284,7 +284,7 @@ def extract_home_health_tasks(df, id_col, name_col):
     return results
 
 
-# --- HELPER: NORMALIZE & AGGREGATE DATAFRAME (FIXED FOR AS_INDEX=FALSE & SUMMING PRN AMOUNTS) ---
+# --- HELPER: NORMALIZE & AGGREGATE DATAFRAME ---
 def aggregate_and_standardize(df_rows):
     if not df_rows:
         empty_df = pd.DataFrame(columns=PAYCHEX_TEMPLATE_COLUMNS)
@@ -427,6 +427,11 @@ def process_home_health_payroll(df, hospice_employee_names=None):
             emp_id = emp_id_raw
 
         emp_name_str = str(emp_name).strip()
+
+        # GLOBAL GUARD: Strict Exclusion Check
+        if emp_name_str in NON_PRN_EMPLOYEES or any(ex.lower() in emp_name_str.lower() for ex in NON_PRN_EMPLOYEES):
+            pass  # Allowed for hourly/mileage processing below, but blocked from PRN tasks
+
         if emp_name_str in HOSPICE_WORKER_IDS:
             formatted_worker_id = HOSPICE_WORKER_IDS[emp_name_str]
         else:
@@ -500,7 +505,8 @@ def process_home_health_payroll(df, hospice_employee_names=None):
                 reg_item["Hours"] = round(total_employee_hours, 2)
                 raw_rows.append(reg_item)
 
-        if not is_hourly_emp and not is_hospice_staff:
+        # STRICT CHECK: Only extract tasks if employee is NOT in the excluded list
+        if not is_hourly_emp and not is_hospice_staff and emp_name_str not in NON_PRN_EMPLOYEES:
             task_items = extract_home_health_tasks(group, id_col, name_col)
             for item in task_items:
                 if item["amount"] > 0:
@@ -526,7 +532,6 @@ def process_home_health_payroll(df, hospice_employee_names=None):
                         "_LOB": "Home Health",
                     })
 
-        # Rule: Mileage computed for salaried/hourly staff EXCEPT Cecil and Kendle (handled via Hospice Time Sheet)
         is_mileage_excluded = emp_name_str in MILEAGE_EXCLUSIONS or any(
             k in emp_name_str.lower() for k in ["cecil", "kendle"])
 
@@ -748,7 +753,8 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 emp_name_str = str(emp_name).strip()
                 emp_name_lower = emp_name_str.lower()
 
-                if emp_name_str in NON_PRN_EMPLOYEES:
+                # GLOBAL GUARD: Strict Exclusion Check for Hospice Master parsing
+                if emp_name_str in NON_PRN_EMPLOYEES or any(ex.lower() in emp_name_lower for ex in NON_PRN_EMPLOYEES):
                     continue
 
                 if emp_name_str in HOSPICE_WORKER_IDS:
@@ -870,6 +876,10 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 display_name = matched_name if matched_name else clean_file_name
                 labor_override = display_name
                 display_lower = display_name.lower()
+
+                # GLOBAL GUARD: Check if resolved name is in non-PRN list
+                is_excluded_non_prn = display_name in NON_PRN_EMPLOYEES or any(
+                    ex.lower() in display_lower for ex in NON_PRN_EMPLOYEES)
 
                 hours_row_idx = -1
                 rate_row_idx = -1
@@ -1034,9 +1044,10 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                             "_LOB": "Hospice",
                         })
 
+                # STRICT CHECK: Only match PRN points if employee is NOT excluded
                 matched_prn_keys = [k for k in prn_points_by_employee.keys() if
                                     k in display_lower or display_lower in k]
-                if matched_prn_keys and formatted_worker_id not in processed_workers_for_prn:
+                if matched_prn_keys and formatted_worker_id not in processed_workers_for_prn and not is_excluded_non_prn:
                     processed_workers_for_prn.add(formatted_worker_id)
                     for pk in matched_prn_keys:
                         for prn_row in prn_points_by_employee[pk]:
