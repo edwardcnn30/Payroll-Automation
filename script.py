@@ -176,25 +176,25 @@ def sanitize_columns(df):
     Sanitizes column names to strip whitespaces and prevent duplicate 'Rate'
     or database insertion errors by indexing conflicts safely.
     """
-    df.columns = [str(c).strip() for c in df.columns]
-    seen = {}
     new_cols = []
+    seen = {}
     for c in df.columns:
-        c_lower = c.lower()
+        c_clean = str(c).strip()
+        c_lower = c_clean.lower()
         if c_lower == "rate":
             if "Rate" in seen:
                 seen["Rate"] += 1
-                new_cols.append(f"Raw_Task_Rate_{seen['Rate']}")
+                new_cols.append(f"Rate_{seen['Rate']}")
             else:
                 seen["Rate"] = 1
-                new_cols.append("Raw_Task_Rate")
+                new_cols.append("Rate")
         else:
-            if c in seen:
-                seen[c] += 1
-                new_cols.append(f"{c}_{seen[c]}")
+            if c_clean in seen:
+                seen[c_clean] += 1
+                new_cols.append(f"{c_clean}_{seen[c_clean]}")
             else:
-                seen[c] = 0
-                new_cols.append(c)
+                seen[c_clean] = 0
+                new_cols.append(c_clean)
     df.columns = new_cols
     return df
 
