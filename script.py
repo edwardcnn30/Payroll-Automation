@@ -275,21 +275,27 @@ with tab1:
 
     if st.button("Execute Unified Multi-LOB Run"):
         if hh_file or hc_file:
-            with st.spinner("Processing enterprise multi-LOB pipeline..."):
-                master_output_frames = []
-                if hh_file:
-                    df_hh = pd.read_excel(hh_file) if hh_file.name.endswith(".xlsx") else pd.read_csv(hh_file)
-                    master_output_frames.append(process_home_health_standalone(df_hh))
-                if hc_file:
-                    df_hc = pd.read_excel(hc_file) if hc_file.name.endswith(".xlsx") else pd.read_csv(hc_file)
-                    master_output_frames.append(process_home_care_engine(df_hc))
+            try:
+                with st.spinner("Processing enterprise multi-LOB pipeline..."):
+                    master_output_frames = []
+                    if hh_file:
+                        df_hh = pd.read_excel(hh_file) if hh_file.name.endswith(".xlsx") else pd.read_csv(hh_file)
+                        if len(df_hh.columns) < 5:
+                            st.error(
+                                "⚠️ Home Health file error: File must contain at least 5 columns to anchor Employee ID on Column E.")
+                        else:
+                            master_output_frames.append(process_home_health_standalone(df_hh))
+                    if hc_file:
+                        df_hc = pd.read_excel(hc_file) if hc_file.name.endswith(".xlsx") else pd.read_csv(hc_file)
+                        master_output_frames.append(process_home_care_engine(df_hc))
 
-                if master_output_frames:
-                    st.session_state.processed_df = pd.concat(master_output_frames, ignore_index=True)
-                    st.success("Unified Batch Execution Completed Successfully!")
-                    st.dataframe(st.session_state.processed_df)
-                else:
-                    st.warning("Please upload valid source files.")
+                    if master_output_frames:
+                        st.session_state.processed_df = pd.concat(master_output_frames, ignore_index=True)
+                        st.success("Unified Batch Execution Completed Successfully!")
+                        st.dataframe(st.session_state.processed_df)
+            except Exception as e:
+                st.error(f"❌ Pipeline Execution Failed: {str(e)}")
+                st.warning("Check your raw file column headers and data formats against the expected template.")
         else:
             st.error("Please upload at least one operational file.")
 
@@ -298,7 +304,7 @@ with tab1:
             "Download Consolidated Payroll Output",
             data=st.session_state.processed_df.to_csv(index=False).encode("utf-8"),
             file_name="Master_Unified_Payroll_Output.csv",
-            mime="text/csv"
+            mime="text/css" if False else "text/csv"
         )
 
 with tab2:
