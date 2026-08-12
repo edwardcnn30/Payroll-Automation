@@ -176,8 +176,19 @@ def sanitize_columns(df):
     return df
 
 
-# --- HELPER: ROBUST TASK & RATE CALCULATION FOR PRN / VISIT STAFF ---
-def extract_task_amounts_for_df(df, id_col, name_col):
+# --- HELPER: FORMAT NUMBERS TO 2 DECIMAL PLACES ---
+def fmt_val(val, decimals=2):
+    if pd.isnull(val) or val == "":
+        return ""
+    try:
+        f = float(str(val).replace("$", "").replace(",", "").strip())
+        return round(f, decimals)
+    except:
+        return val
+
+
+# --- HELPER: STANDARD HOME HEALTH TASK & AMOUNT EXTRACTION ---
+def extract_home_health_tasks(df, id_col, name_col):
     df = sanitize_columns(df)
 
     task_col = next(
@@ -202,7 +213,6 @@ def extract_task_amounts_for_df(df, id_col, name_col):
         for _, row in group.iterrows():
             task_name = str(row.get(task_col, "")) if task_col and pd.notnull(row.get(task_col)) else ""
 
-            # As long as it is on the task, compute units * rate
             if task_name and task_name.lower() not in ["nan", "none", ""]:
                 units = 1.0
                 if units_col and pd.notnull(row.get(units_col)):
@@ -240,12 +250,12 @@ def extract_task_amounts_for_df(df, id_col, name_col):
                         "emp_name": str(emp_name).strip(),
                         "emp_name_lower": str(emp_name).strip().lower(),
                         "task": task_name,
-                        "amount": total_item_amt
+                        "amount": round(total_item_amt, 2)
                     })
     return results
 
 
-# --- HELPER: NORMALIZE & AGGREGATE DATAFRAME WITH CUSTOM HIERARCHY ---
+# --- HELPER: NORMALIZE & AGGREGATE DATAFRAME WITH 2-DECIMAL PRECISION ---
 def aggregate_and_standardize(df_rows):
     if not df_rows:
         empty_df = pd.DataFrame(columns=PAYCHEX_TEMPLATE_COLUMNS)
@@ -259,6 +269,7 @@ def aggregate_and_standardize(df_rows):
     temp_df["Hours"] = pd.to_numeric(temp_df["Hours"], errors="coerce").fillna(0)
     temp_df["Units"] = pd.to_numeric(temp_df["Units"], errors="coerce").fillna(0)
     temp_df["Amount"] = pd.to_numeric(temp_df["Amount"], errors="coerce").fillna(0)
+    temp_df["Rate"] = pd.to_numeric(temp_df["Rate"], errors="coerce").fillna(0)
 
     group_cols = [
         "Review",
@@ -286,13 +297,14 @@ def aggregate_and_standardize(df_rows):
         temp_df.groupby(
             [c for c in group_cols if c in temp_df.columns], dropna=False
         )
-        .agg({"Hours": "sum", "Units": "sum", "Amount": "sum"})
+        .agg({"Hours": "sum", "Units": "sum", "Amount": "sum", "Rate": "first"})
         .reset_index()
     )
 
-    agg_df["Hours"] = agg_df["Hours"].apply(lambda x: x if x > 0 else "")
-    agg_df["Units"] = agg_df["Units"].apply(lambda x: x if x > 0 else "")
-    agg_df["Amount"] = agg_df["Amount"].apply(lambda x: x if x > 0 else "")
+    agg_df["Hours"] = agg_df["Hours"].apply(lambda x: round(x, 2) if x > 0 else "")
+    agg_df["Units"] = agg_df["Units"].apply(lambda x: round(x, 2) if x > 0 else "")
+    agg_df["Amount"] = agg_df["Amount"].apply(lambda x: round(x, 2) if x > 0 else "")
+    agg_df["Rate"] = agg_df["Rate"].apply(lambda x: round(x, 2) if x > 0 else "")
 
     def assign_comp_rank(row):
         comp = str(row.get("Pay Component", ""))
@@ -409,7 +421,7 @@ def process_home_health_payroll(df, hospice_employee_names=None):
                 "Org": "",
                 "Job Number": "",
                 "Pay Component": "Hourly",
-                "Rate": applied_rate,
+                "Rate": round(applied_rate, 2),
                 "Rate Number": "",
                 "Hours": 0.0,
                 "Units": "",
@@ -426,20 +438,20 @@ def process_home_health_payroll(df, hospice_employee_names=None):
 
             if total_employee_hours > 80:
                 reg_item = base_item.copy()
-                reg_item["Hours"] = 80.0
+                reg_item["Hours"] = round(80.0, 2)
                 raw_rows.append(reg_item)
 
                 ot_item = base_item.copy()
                 ot_item["Pay Component"] = "Overtime"
-                ot_item["Hours"] = total_employee_hours - 80.0
+                ot_item["Hours"] = round(total_employee_hours - 80.0, 2)
                 raw_rows.append(ot_item)
             else:
                 reg_item = base_item.copy()
-                reg_item["Hours"] = total_employee_hours
+                reg_item["Hours"] = round(total_employee_hours, 2)
                 raw_rows.append(reg_item)
 
         if not is_hourly_emp and not is_hospice_staff:
-            task_items = extract_task_amounts_for_df(group, id_col, name_col)
+            task_items = extract_home_health_tasks(group, id_col, name_col)
             for item in task_items:
                 if item["amount"] > 0:
                     raw_rows.append({
@@ -454,7 +466,7 @@ def process_home_health_payroll(df, hospice_employee_names=None):
                         "Hours": "",
                         "Units": "",
                         "Line Date": "",
-                        "Amount": item["amount"],
+                        "Amount": round(item["amount"], 2),
                         "Check Seq Number": "",
                         "Override State": "",
                         "Override Local": "",
@@ -475,7 +487,7 @@ def process_home_health_payroll(df, hospice_employee_names=None):
                 "Rate": 0.73,
                 "Rate Number": "",
                 "Hours": "",
-                "Units": total_employee_mileage,
+                "Units": round(total_employee_mileage, 2),
                 "Line Date": "",
                 "Amount": "",
                 "Check Seq Number": "",
@@ -557,9 +569,9 @@ def process_home_care_payroll(df):
                                 "Org": "",
                                 "Job Number": "",
                                 "Pay Component": "Hourly",
-                                "Rate": rate if rate > 0 else "",
+                                "Rate": round(rate, 2) if rate > 0 else "",
                                 "Rate Number": "",
-                                "Hours": reg_hrs,
+                                "Hours": round(reg_hrs, 2),
                                 "Units": "",
                                 "Line Date": "",
                                 "Amount": "",
@@ -583,9 +595,9 @@ def process_home_care_payroll(df):
                     "Org": "",
                     "Job Number": "",
                     "Pay Component": actual_comp,
-                    "Rate": rate if rate > 0 else "",
+                    "Rate": round(rate, 2) if rate > 0 else "",
                     "Rate Number": "",
-                    "Hours": hours,
+                    "Hours": round(hours, 2),
                     "Units": "",
                     "Line Date": "",
                     "Amount": "",
@@ -609,7 +621,7 @@ def process_home_care_payroll(df):
                 "Rate": 0.73,
                 "Rate Number": "",
                 "Hours": "",
-                "Units": mileage_units,
+                "Units": round(mileage_units, 2),
                 "Line Date": "",
                 "Amount": "",
                 "Check Seq Number": "",
@@ -662,33 +674,70 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     id_mapping[emp_name_lower] = formatted_id
                     name_mapping[formatted_id] = emp_name
 
-            task_entries = extract_task_amounts_for_df(hh_df, id_col, name_col)
-            for entry in task_entries:
-                emp_name_lower = entry["emp_name_lower"]
-                if entry["amount"] > 0 and emp_name_lower:
-                    if emp_name_lower not in prn_points_by_employee:
-                        prn_points_by_employee[emp_name_lower] = []
-                    prn_points_by_employee[emp_name_lower].append({
-                        "Review": "✅ Validated",
-                        "Client ID": 16068715,
-                        "Worker ID": entry["emp_id"],
-                        "Org": "",
-                        "Job Number": "",
-                        "Pay Component": "PRN Points",
-                        "Rate": "",
-                        "Rate Number": "",
-                        "Hours": "",
-                        "Units": "",
-                        "Line Date": "",
-                        "Amount": entry["amount"],
-                        "Check Seq Number": "",
-                        "Override State": "",
-                        "Override Local": "",
-                        "Override Local Jurisdiction": "",
-                        "Labor Override": entry["emp_name"],
-                        "_EmployeeName": entry["emp_name"],
-                        "_LOB": "Hospice",
-                    })
+            task_col = next((c for c in hh_df.columns if
+                             any(k in c.lower() for k in ["task", "visit", "service", "description", "type"])), None)
+            rate_col = next((c for c in hh_df.columns if
+                             any(k in c.lower() for k in ["rate", "pay rate", "fee", "amount", "total"])), None)
+
+            grouped = hh_df.groupby([id_col, hh_df[name_col].astype(str)], dropna=False)
+            for (emp_id_raw, emp_name), group in grouped:
+                try:
+                    emp_id = float(emp_id_raw) if pd.notnull(emp_id_raw) and str(emp_id_raw).replace(".", "",
+                                                                                                     1).isdigit() else emp_id_raw
+                except:
+                    emp_id = emp_id_raw
+                formatted_worker_id = int(emp_id) if isinstance(emp_id, float) and emp_id.is_integer() else emp_id
+                emp_name_str = str(emp_name).strip()
+                emp_name_lower = emp_name_str.lower()
+
+                for _, row in group.iterrows():
+                    task_name = str(row.get(task_col, "")) if task_col and pd.notnull(row.get(task_col)) else ""
+                    if task_name and task_name.lower() not in ["nan", "none", ""]:
+                        # Brandy rule: Task column amount equals Rate column value regardless of description if on task
+                        item_amt = 0.0
+                        if rate_col and pd.notnull(row.get(rate_col)):
+                            try:
+                                item_amt = float(str(row.get(rate_col)).replace("$", "").replace(",", "").strip())
+                            except:
+                                item_amt = 0.0
+
+                        if item_amt == 0:
+                            for c in hh_df.columns:
+                                if c not in [id_col, name_col, task_col]:
+                                    val = row.get(c)
+                                    if pd.notnull(val):
+                                        try:
+                                            f = float(str(val).replace("$", "").replace(",", "").strip())
+                                            if 0 < f < 10000:
+                                                item_amt = f
+                                                break
+                                        except:
+                                            pass
+
+                        if item_amt > 0:
+                            if emp_name_lower not in prn_points_by_employee:
+                                prn_points_by_employee[emp_name_lower] = []
+                            prn_points_by_employee[emp_name_lower].append({
+                                "Review": "✅ Validated",
+                                "Client ID": 16068715,
+                                "Worker ID": formatted_worker_id,
+                                "Org": "",
+                                "Job Number": "",
+                                "Pay Component": "PRN Points",
+                                "Rate": "",
+                                "Rate Number": "",
+                                "Hours": "",
+                                "Units": "",
+                                "Line Date": "",
+                                "Amount": round(item_amt, 2),
+                                "Check Seq Number": "",
+                                "Override State": "",
+                                "Override Local": "",
+                                "Override Local Jurisdiction": "",
+                                "Labor Override": emp_name_str,
+                                "_EmployeeName": emp_name_str,
+                                "_LOB": "Hospice",
+                            })
         except Exception as e:
             st.error(f"Error reading HH master for hospice: {e}")
 
@@ -860,9 +909,9 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                                 "Org": "",
                                 "Job Number": "",
                                 "Pay Component": "Hourly",
-                                "Rate": rate,
+                                "Rate": round(rate, 2),
                                 "Rate Number": "",
-                                "Hours": reg_hrs,
+                                "Hours": round(reg_hrs, 2),
                                 "Units": "",
                                 "Line Date": "",
                                 "Amount": "",
@@ -882,9 +931,9 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                                 "Org": "",
                                 "Job Number": "",
                                 "Pay Component": "Overtime",
-                                "Rate": rate,
+                                "Rate": round(rate, 2),
                                 "Rate Number": "",
-                                "Hours": ot_hrs,
+                                "Hours": round(ot_hrs, 2),
                                 "Units": "",
                                 "Line Date": "",
                                 "Amount": "",
@@ -904,10 +953,10 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                             "Org": "",
                             "Job Number": "",
                             "Pay Component": pay_comp,
-                            "Rate": rate if rate > 0 else "",
+                            "Rate": round(rate, 2) if rate > 0 else "",
                             "Rate Number": "",
-                            "Hours": hours_val if pay_comp != "MILEAGE REIMB" else "",
-                            "Units": units_val if pay_comp == "MILEAGE REIMB" else "",
+                            "Hours": round(hours_val, 2) if pay_comp != "MILEAGE REIMB" and hours_val > 0 else "",
+                            "Units": round(units_val, 2) if pay_comp == "MILEAGE REIMB" and units_val > 0 else "",
                             "Line Date": "",
                             "Amount": "",
                             "Check Seq Number": "",
