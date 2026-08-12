@@ -855,12 +855,12 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                             "_LOB": "Hospice",
                         })
 
-                # --- FIXED PRN INJECTION: Deduplicated globally per employee to prevent 365 inflation ---
+                # --- ELITE WORKER-ID DEDUPLICATION GUARD FOR PRN POINTS ---
                 matched_prn_keys = [k for k in prn_points_by_employee.keys() if
                                     k in display_lower or display_lower in k]
-                for pk in matched_prn_keys:
-                    if pk not in processed_workers_for_prn:
-                        processed_workers_for_prn.add(pk)
+                if matched_prn_keys and formatted_worker_id not in processed_workers_for_prn:
+                    processed_workers_for_prn.add(formatted_worker_id)
+                    for pk in matched_prn_keys:
                         for prn_row in prn_points_by_employee[pk]:
                             prn_row_copy = prn_row.copy()
                             prn_row_copy["Worker ID"] = formatted_worker_id
