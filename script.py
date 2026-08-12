@@ -195,17 +195,16 @@ def sanitize_columns(df):
     return df
 
 
-# --- HELPER: STANDARD HOME HEALTH TASK & AMOUNT EXTRACTION ---
+# --- HELPER: STANDARD HOME HEALTH TASK & AMOUNT EXTRACTION (USING ROW AMOUNTS DIRECTLY) ---
 def extract_home_health_tasks(df, id_col, name_col):
     df = sanitize_columns(df)
 
     task_col = next(
         (c for c in df.columns if any(k in c.lower() for k in ["task", "visit", "service", "description", "type"])),
         None)
-    units_col = next(
-        (c for c in df.columns if any(k in c.lower() for k in ["unit", "count", "qty", "quantity", "hours"])), None)
-    rate_col = next(
-        (c for c in df.columns if any(k in c.lower() for k in ["rate", "pay rate", "fee", "amount", "total"])), None)
+    amount_col = next(
+        (c for c in df.columns if any(k in c.lower() for k in ["amount", "total", "pay", "fee", "earnings", "net"])),
+        None)
 
     results = []
     grouped = df.groupby([id_col, df[name_col].astype(str)], dropna=False)
@@ -227,25 +226,16 @@ def extract_home_health_tasks(df, id_col, name_col):
             task_name = str(row.get(task_col, "")) if task_col and pd.notnull(row.get(task_col)) else ""
 
             if task_name and task_name.lower() not in ["nan", "none", ""]:
-                units = 1.0
-                if units_col and pd.notnull(row.get(units_col)):
+                total_item_amt = 0.0
+                if amount_col and pd.notnull(row.get(amount_col)):
                     try:
-                        units = float(str(row.get(units_col)).replace(",", "").strip())
+                        total_item_amt = float(str(row.get(amount_col)).replace("$", "").replace(",", "").strip())
                     except:
-                        units = 1.0
-
-                rate_val = 0.0
-                if rate_col and pd.notnull(row.get(rate_col)):
-                    try:
-                        rate_val = float(str(row.get(rate_col)).replace("$", "").replace(",", "").strip())
-                    except:
-                        rate_val = 0.0
-
-                total_item_amt = units * rate_val
+                        total_item_amt = 0.0
 
                 if total_item_amt == 0:
                     for c in df.columns:
-                        if c not in [id_col, name_col, task_col, units_col]:
+                        if c not in [id_col, name_col, task_col]:
                             val = row.get(c)
                             if pd.notnull(val):
                                 s = str(val).replace("$", "").replace(",", "").strip()
@@ -268,7 +258,7 @@ def extract_home_health_tasks(df, id_col, name_col):
     return results
 
 
-# --- HELPER: NORMALIZE & AGGREGATE DATAFRAME (FIXED FOR AS_INDEX=FALSE) ---
+# --- HELPER: NORMALIZE & AGGREGATE DATAFRAME (FIXED FOR AS_INDEX=FALSE & SUMMING PRN AMOUNTS) ---
 def aggregate_and_standardize(df_rows):
     if not df_rows:
         empty_df = pd.DataFrame(columns=PAYCHEX_TEMPLATE_COLUMNS)
@@ -721,8 +711,8 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
             task_col = next((c for c in hh_df.columns if
                              any(k in c.lower() for k in ["task", "visit", "service", "description", "type"])), None)
-            rate_col = next((c for c in hh_df.columns if
-                             any(k in c.lower() for k in ["rate", "pay rate", "fee", "amount", "total"])), None)
+            amount_col = next((c for c in hh_df.columns if
+                               any(k in c.lower() for k in ["amount", "total", "pay", "fee", "earnings"])), None)
 
             grouped = hh_df.groupby([id_col, hh_df[name_col].astype(str)], dropna=False)
             for (emp_id_raw, emp_name), group in grouped:
@@ -743,9 +733,9 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     task_name = str(row.get(task_col, "")) if task_col and pd.notnull(row.get(task_col)) else ""
                     if task_name and task_name.lower() not in ["nan", "none", ""]:
                         item_amt = 0.0
-                        if rate_col and pd.notnull(row.get(rate_col)):
+                        if amount_col and pd.notnull(row.get(amount_col)):
                             try:
-                                item_amt = float(str(row.get(rate_col)).replace("$", "").replace(",", "").strip())
+                                item_amt = float(str(row.get(amount_col)).replace("$", "").replace(",", "").strip())
                             except:
                                 item_amt = 0.0
 
