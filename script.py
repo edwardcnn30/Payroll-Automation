@@ -3,133 +3,189 @@ import pandas as pd
 import streamlit as st
 
 # ==========================================
-# AUTHENTICATION & UI SETUP
+# UNIVERSAL SAFE EXECUTION WRAPPER
 # ==========================================
-st.set_page_config(
-    page_title="Payroll Studio Enterprise", page_icon="💼", layout="wide"
-)
+try:
+    # Page Configuration must be the first Streamlit command
+    st.set_page_config(
+        page_title="Payroll Studio Enterprise", page_icon="💼", layout="wide"
+    )
 
-# Initialize Session State for Authentication & Data Persistence
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-if "processed_df" not in st.session_state:
-    st.session_state.processed_df = None
-
-
-def login_screen():
-    st.subheader("🔐 Enterprise Payroll Studio - Secure Login")
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-
-    if st.button("Sign In"):
-        if username and password:
-            st.session_state.authenticated = True
-            # Note: Streamlit buttons naturally trigger a script rerun,
-            # so manual st.rerun() has been removed to prevent state crashes.
-        else:
-            st.error("Please provide valid enterprise credentials.")
+    # Initialize Session State for Authentication & Data Persistence
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    if "processed_df" not in st.session_state:
+        st.session_state.processed_df = None
 
 
-if not st.session_state.authenticated:
-    login_screen()
-    st.stop()
+    def login_screen():
+        st.subheader("🔐 Enterprise Payroll Studio - Secure Login")
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+
+        if st.button("Sign In"):
+            if username and password:
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("Please provide valid enterprise credentials.")
 
 
-# ==========================================
-# CORE MULTI-LOB PIPELINE LOGIC ENGINES
-# ==========================================
+    if not st.session_state.authenticated:
+        login_screen()
+        st.stop()
 
-def process_home_health_standalone(df):
-    df.columns = [str(c).strip() for c in df.columns]
-    emp_id_col = df.columns[4] if len(df.columns) > 4 else df.columns[0]
-    name_col = next((c for c in df.columns if any(k in c.lower() for k in ["name", "employee", "worker"])),
-                    df.columns[3] if len(df.columns) > 3 else df.columns[0])
-    rate_col = next((c for c in df.columns if "rate" in c.lower()), None)
-    hours_col = next((c for c in df.columns if any(k in c.lower() for k in ["hour", "hrs"])), None)
-    amount_col = next((c for c in df.columns if any(k in c.lower() for k in ["amount", "total", "pay", "fee"])), None)
 
-    if "Mileage" not in df.columns:
-        df["Mileage"] = 0.0
+    # ==========================================
+    # CORE MULTI-LOB PIPELINE LOGIC ENGINES
+    # ==========================================
 
-    HOURLY_TARGET_IDS = {"1389", "1351", "1388", "1162", "1280"}
-    HOURLY_RATES = {
-        "1389": 40.00,
-        "1351": 35.00,
-        "1388": 40.00,
-        "1162": 35.00,
-        "1280": 0.00
-    }
+    def process_home_health_standalone(df):
+        df.columns = [str(c).strip() for c in df.columns]
+        emp_id_col = df.columns[4] if len(df.columns) > 4 else df.columns[0]
+        name_col = next((c for c in df.columns if any(k in c.lower() for k in ["name", "employee", "worker"])),
+                        df.columns[3] if len(df.columns) > 3 else df.columns[0])
+        rate_col = next((c for c in df.columns if "rate" in c.lower()), None)
+        hours_col = next((c for c in df.columns if any(k in c.lower() for k in ["hour", "hrs"])), None)
+        amount_col = next((c for c in df.columns if any(k in c.lower() for k in ["amount", "total", "pay", "fee"])),
+                          None)
 
-    raw_rows = []
+        if "Mileage" not in df.columns:
+            df["Mileage"] = 0.0
 
-    def clean_id(val):
-        if pd.isnull(val):
-            return "UNKNOWN"
-        val_str = str(val).strip()
-        if val_str.endswith('.0'):
-            val_str = val_str[:-2]
-        return val_str
+        HOURLY_TARGET_IDS = {"1389", "1351", "1388", "1162", "1280"}
+        HOURLY_RATES = {
+            "1389": 40.00,
+            "1351": 35.00,
+            "1388": 40.00,
+            "1162": 35.00,
+            "1280": 0.00
+        }
 
-    df["_Clean_Emp_ID"] = df[emp_id_col].apply(clean_id)
-    grouped = df.groupby(["_Clean_Emp_ID", df[name_col].astype(str)], dropna=False)
+        raw_rows = []
 
-    for (emp_id_str, emp_name), group in grouped:
-        emp_name_str = str(emp_name).strip()
-        labor_override = emp_name_str if emp_name_str and emp_name_str.lower() != "nan" else emp_id_str
+        def clean_id(val):
+            if pd.isnull(val):
+                return "UNKNOWN"
+            val_str = str(val).strip()
+            if val_str.endswith('.0'):
+                val_str = val_str[:-2]
+            return val_str
 
-        is_hourly = emp_id_str in HOURLY_TARGET_IDS
+        df["_Clean_Emp_ID"] = df[emp_id_col].apply(clean_id)
+        grouped = df.groupby(["_Clean_Emp_ID", df[name_col].astype(str)], dropna=False)
 
-        total_employee_hours = 0.0
-        total_employee_mileage = 0.0
-        total_prn_amount = 0.0
-        applied_rate = HOURLY_RATES.get(emp_id_str, 35.00)
+        for (emp_id_str, emp_name), group in grouped:
+            emp_name_str = str(emp_name).strip()
+            labor_override = emp_name_str if emp_name_str and emp_name_str.lower() != "nan" else emp_id_str
 
-        for _, row in group.iterrows():
-            mileage = float(row.get("Mileage", 0)) if pd.notnull(row.get("Mileage")) and str(
-                row.get("Mileage")).replace(".", "", 1).isdigit() else 0.0
-            total_employee_mileage += mileage
+            is_hourly = emp_id_str in HOURLY_TARGET_IDS
+
+            total_employee_hours = 0.0
+            total_employee_mileage = 0.0
+            total_prn_amount = 0.0
+            applied_rate = HOURLY_RATES.get(emp_id_str, 35.00)
+
+            for _, row in group.iterrows():
+                mileage = float(row.get("Mileage", 0)) if pd.notnull(row.get("Mileage")) and str(
+                    row.get("Mileage")).replace(".", "", 1).isdigit() else 0.0
+                total_employee_mileage += mileage
+
+                if is_hourly:
+                    if hours_col and pd.notnull(row.get(hours_col)):
+                        try:
+                            total_employee_hours += float(str(row.get(hours_col)).replace(",", "").strip())
+                        except:
+                            pass
+                    if rate_col and pd.notnull(row.get(rate_col)):
+                        try:
+                            r = float(str(row.get(rate_col)).replace("$", "").replace(",", "").strip())
+                            if r > 0:
+                                applied_rate = r
+                        except:
+                            pass
+                else:
+                    item_amt = 0.0
+                    if amount_col and pd.notnull(row.get(amount_col)):
+                        try:
+                            item_amt = float(str(row.get(amount_col)).replace("$", "").replace(",", "").strip())
+                        except:
+                            item_amt = 0.0
+                    if item_amt == 0 and rate_col and pd.notnull(row.get(rate_col)):
+                        try:
+                            item_amt = float(str(row.get(rate_col)).replace("$", "").replace(",", "").strip())
+                        except:
+                            item_amt = 0.0
+                    if item_amt > 0:
+                        total_prn_amount += item_amt
 
             if is_hourly:
-                if hours_col and pd.notnull(row.get(hours_col)):
-                    try:
-                        total_employee_hours += float(str(row.get(hours_col)).replace(",", "").strip())
-                    except:
-                        pass
-                if rate_col and pd.notnull(row.get(rate_col)):
-                    try:
-                        r = float(str(row.get(rate_col)).replace("$", "").replace(",", "").strip())
-                        if r > 0:
-                            applied_rate = r
-                    except:
-                        pass
+                if total_employee_hours > 0:
+                    base_item = {
+                        "Review": "✅ Validated",
+                        "Client ID": 16068715,
+                        "Worker ID": emp_id_str,
+                        "Org": "",
+                        "Job Number": "",
+                        "Pay Component": "Hourly",
+                        "Rate": round(applied_rate, 2),
+                        "Rate Number": "",
+                        "Hours": 0.0,
+                        "Units": "",
+                        "Line Date": "",
+                        "Amount": "",
+                        "Check Seq Number": "",
+                        "Override State": "",
+                        "Override Local": "",
+                        "Override Local Jurisdiction": "",
+                        "Labor Override": labor_override,
+                    }
+                    if total_employee_hours > 80:
+                        reg = base_item.copy()
+                        reg["Hours"] = round(80.0, 2)
+                        raw_rows.append(reg)
+                        ot = base_item.copy()
+                        ot["Pay Component"] = "Overtime"
+                        ot["Hours"] = round(total_employee_hours - 80.0, 2)
+                        raw_rows.append(ot)
+                    else:
+                        reg = base_item.copy()
+                        reg["Hours"] = round(total_employee_hours, 2)
+                        raw_rows.append(reg)
             else:
-                item_amt = 0.0
-                if amount_col and pd.notnull(row.get(amount_col)):
-                    try:
-                        item_amt = float(str(row.get(amount_col)).replace("$", "").replace(",", "").strip())
-                    except:
-                        item_amt = 0.0
-                if item_amt == 0 and rate_col and pd.notnull(row.get(rate_col)):
-                    try:
-                        item_amt = float(str(row.get(rate_col)).replace("$", "").replace(",", "").strip())
-                    except:
-                        item_amt = 0.0
-                if item_amt > 0:
-                    total_prn_amount += item_amt
+                if total_prn_amount > 0:
+                    raw_rows.append({
+                        "Review": "✅ Validated",
+                        "Client ID": 16068715,
+                        "Worker ID": emp_id_str,
+                        "Org": "",
+                        "Job Number": "",
+                        "Pay Component": "PRN Points",
+                        "Rate": "",
+                        "Rate Number": "",
+                        "Hours": "",
+                        "Units": "",
+                        "Line Date": "",
+                        "Amount": round(total_prn_amount, 2),
+                        "Check Seq Number": "",
+                        "Override State": "",
+                        "Override Local": "",
+                        "Override Local Jurisdiction": "",
+                        "Labor Override": labor_override,
+                    })
 
-        if is_hourly:
-            if total_employee_hours > 0:
-                base_item = {
+            if total_employee_mileage > 0:
+                raw_rows.append({
                     "Review": "✅ Validated",
                     "Client ID": 16068715,
                     "Worker ID": emp_id_str,
                     "Org": "",
                     "Job Number": "",
-                    "Pay Component": "Hourly",
-                    "Rate": round(applied_rate, 2),
+                    "Pay Component": "MILEAGE REIMB",
+                    "Rate": 0.73,
                     "Rate Number": "",
-                    "Hours": 0.0,
-                    "Units": "",
+                    "Hours": "",
+                    "Units": round(total_employee_mileage, 2),
                     "Line Date": "",
                     "Amount": "",
                     "Check Seq Number": "",
@@ -137,119 +193,64 @@ def process_home_health_standalone(df):
                     "Override Local": "",
                     "Override Local Jurisdiction": "",
                     "Labor Override": labor_override,
-                }
-                if total_employee_hours > 80:
-                    reg = base_item.copy()
-                    reg["Hours"] = round(80.0, 2)
-                    raw_rows.append(reg)
-                    ot = base_item.copy()
-                    ot["Pay Component"] = "Overtime"
-                    ot["Hours"] = round(total_employee_hours - 80.0, 2)
-                    raw_rows.append(ot)
-                else:
-                    reg = base_item.copy()
-                    reg["Hours"] = round(total_employee_hours, 2)
-                    raw_rows.append(reg)
-        else:
-            if total_prn_amount > 0:
-                raw_rows.append({
-                    "Review": "✅ Validated",
-                    "Client ID": 16068715,
-                    "Worker ID": emp_id_str,
-                    "Org": "",
-                    "Job Number": "",
-                    "Pay Component": "PRN Points",
-                    "Rate": "",
-                    "Rate Number": "",
-                    "Hours": "",
-                    "Units": "",
-                    "Line Date": "",
-                    "Amount": round(total_prn_amount, 2),
-                    "Check Seq Number": "",
-                    "Override State": "",
-                    "Override Local": "",
-                    "Override Local Jurisdiction": "",
-                    "Labor Override": labor_override,
                 })
 
-        if total_employee_mileage > 0:
-            raw_rows.append({
-                "Review": "✅ Validated",
-                "Client ID": 16068715,
-                "Worker ID": emp_id_str,
-                "Org": "",
-                "Job Number": "",
-                "Pay Component": "MILEAGE REIMB",
-                "Rate": 0.73,
-                "Rate Number": "",
-                "Hours": "",
-                "Units": round(total_employee_mileage, 2),
-                "Line Date": "",
-                "Amount": "",
-                "Check Seq Number": "",
-                "Override State": "",
-                "Override Local": "",
-                "Override Local Jurisdiction": "",
-                "Labor Override": labor_override,
-            })
-
-    return pd.DataFrame(raw_rows)
+        return pd.DataFrame(raw_rows)
 
 
-def process_home_care_engine(df):
-    df.columns = [str(c).strip() for c in df.columns]
-    raw_rows = []
+    def process_home_care_engine(df):
+        df.columns = [str(c).strip() for c in df.columns]
+        raw_rows = []
 
-    for emp_id, group in df.groupby(df.columns[4], dropna=False):
-        is_missing_id = pd.isnull(emp_id) or str(emp_id).strip().lower() in ["", "nan", "none"]
-        review_status = "⚠️ Missing ID" if is_missing_id else "✅ Validated"
+        for emp_id, group in df.groupby(df.columns[4], dropna=False):
+            is_missing_id = pd.isnull(emp_id) or str(emp_id).strip().lower() in ["", "nan", "none"]
+            review_status = "⚠️ Missing ID" if is_missing_id else "✅ Validated"
 
-        total_id_hours = 0.0
-        id_records = []
+            total_id_hours = 0.0
+            id_records = []
 
-        for _, row in group.iterrows():
-            comp = str(row.get("Pay Component", "")).strip()
-            if not comp or comp.lower() in ["nan", "none"]:
-                comp = "Overtime"
+            for _, row in group.iterrows():
+                comp = str(row.get("Pay Component", "")).strip()
+                if not comp or comp.lower() in ["nan", "none"]:
+                    comp = "Overtime"
 
-            hrs = 0.0
-            try:
-                hrs = float(str(row.get("Hours", 0)).replace(",", ""))
-            except:
                 hrs = 0.0
+                try:
+                    hrs = float(str(row.get("Hours", 0)).replace(",", ""))
+                except:
+                    hrs = 0.0
 
-            if comp.upper() == "HOURLY":
-                total_id_hours += hrs
-            else:
-                id_records.append({**row.to_dict(), "Pay Component": comp, "Hours": hrs})
+                if comp.upper() == "HOURLY":
+                    total_id_hours += hrs
+                else:
+                    id_records.append({**row.to_dict(), "Pay Component": comp, "Hours": hrs})
 
-        if total_id_hours > 0:
-            if total_id_hours > 80:
-                id_records.append({"Pay Component": "Hourly", "Hours": 80.0})
-                id_records.append({"Pay Component": "Overtime", "Hours": total_id_hours - 80.0})
-            else:
-                id_records.append({"Pay Component": "Hourly", "Hours": total_id_hours})
+            if total_id_hours > 0:
+                if total_id_hours > 80:
+                    id_records.append({"Pay Component": "Hourly", "Hours": 80.0})
+                    id_records.append({"Pay Component": "Overtime", "Hours": total_id_hours - 80.0})
+                else:
+                    id_records.append({"Pay Component": "Hourly", "Hours": total_id_hours})
 
-        for rec in id_records:
-            raw_rows.append({
-                "Review": review_status,
-                "Client ID": 16068715,
-                "Worker ID": emp_id if not is_missing_id else "UNKNOWN",
-                "Pay Component": rec.get("Pay Component"),
-                "Hours": rec.get("Hours", ""),
-                "Rate": rec.get("Rate", ""),
-                "Units": rec.get("Units", ""),
-                "Amount": rec.get("Amount", ""),
-                "Labor Override": rec.get("Worker Name", ""),
-            })
+            for rec in id_records:
+                raw_rows.append({
+                    "Review": review_status,
+                    "Client ID": 16068715,
+                    "Worker ID": emp_id if not is_missing_id else "UNKNOWN",
+                    "Pay Component": rec.get("Pay Component"),
+                    "Hours": rec.get("Hours", ""),
+                    "Rate": rec.get("Rate", ""),
+                    "Units": rec.get("Units", ""),
+                    "Amount": rec.get("Amount", ""),
+                    "Labor Override": rec.get("Worker Name", ""),
+                })
 
-    return pd.DataFrame(raw_rows)
+        return pd.DataFrame(raw_rows)
 
 
-# ==========================================
-# SAFE MAIN APPLICATION WRAPPER & UI INTERFACE
-# ==========================================
-try:
+    # ==========================================
+    # MAIN APPLICATION UI INTERFACE
+    # ==========================================
     st.title("💼 Payroll Studio Enterprise - Unified Multi-LOB Engine")
     st.markdown("---")
 
@@ -311,5 +312,5 @@ try:
         st.write("Manages Brandy & Cooper on-call logic and cross-over PRN retention.")
 
 except Exception as e:
-    st.error("🚨 Critical Runtime Exception Caught:")
+    st.error("🚨 Critical Application Exception Caught:")
     st.code(traceback.format_exc())
