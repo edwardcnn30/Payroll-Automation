@@ -691,7 +691,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 display_lower = display_name.lower()
 
                 # --- AUDITED VERTICAL HOSPICE GRID PARSER ---
-                # Strictly disregard Total Pay. Parse Total Hours and Hourly Rate vertically column by column.
                 hours_row_idx = -1
                 rate_row_idx = -1
 
@@ -726,7 +725,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                         if h_num > 0 or r_num > 0:
                             pairs_to_process.append((h_num, r_num))
                 else:
-                    # Fallback vertical scanner if explicit labels are missing
                     for c in range(df_ts.shape[1]):
                         col_vals = [df_ts.iloc[r, c] for r in range(len(df_ts.columns))]
                         col_text = " ".join([str(v).lower() for v in col_vals if pd.notnull(v)])
@@ -751,24 +749,25 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                             pairs_to_process.append((found_h, found_r))
 
                 accumulated_hospice_hours = 0.0
+                is_maggie = "maggie" in display_lower
 
                 for hrs, rate in pairs_to_process:
                     if hrs == 0 and rate == 0:
                         continue
 
-                    # Classify Component Rule:
-                    # 1. Rate 0.73 -> MILEAGE REIMB (Units = hrs/miles)
-                    # 2. Both Brandy & Cooper have On-Call Weekdays (rate == 50.0) and On-Call Weekends (rate == 100.0)
-                    # 3. All other rates -> Hourly
+                    # Component Classification Logic:
+                    # 1. Rate 0.73 -> MILEAGE REIMB
+                    # 2. Maggie does NOT do on-call (Rate 50.0 or 100.0 for Maggie is tagged as Hourly)
+                    # 3. Brandy & Cooper route rate 50.0 to On call Weekdays and 100.0 to On call Weekends
                     if rate == 0.73:
                         pay_comp = "MILEAGE REIMB"
                         units_val = hrs if hrs > 0 else 1.0
                         hours_val = ""
-                    elif rate == 50.0:
+                    elif rate == 50.0 and not is_maggie:
                         pay_comp = "On call Weekdays"
                         units_val = ""
                         hours_val = hrs
-                    elif rate == 100.0:
+                    elif rate == 100.0 and not is_maggie:
                         pay_comp = "On call Weekends"
                         units_val = ""
                         hours_val = hrs
@@ -859,9 +858,9 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                             "_LOB": "Hospice",
                         })
 
-                # Append PRN Points for Brandy from Home Health rules if available
+                # Append PRN Points for Brandy Kendle / matching employees from Home Health master
                 matched_prn_keys = [k for k in prn_points_by_employee.keys() if
-                                    k in display_lower or display_lower in k]
+                                    k in display_lower or display_lower in k or "brandy" in display_lower]
                 for pk in matched_prn_keys:
                     for prn_row in prn_points_by_employee[pk]:
                         prn_row_copy = prn_row.copy()
