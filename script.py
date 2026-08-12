@@ -170,15 +170,18 @@ PAYCHEX_TEMPLATE_COLUMNS = [
 ]
 
 
-# --- HELPER: ENSURE UNIQUE COLUMN NAMES (PREVENTS RATE COLLISION) ---
+# --- HELPER: ROBUST COLUMN SANITIZATION (PREVENTS 'Rate' COLLISION) ---
 def sanitize_columns(df):
+    """
+    Sanitizes column names to strip whitespaces and prevent duplicate 'Rate'
+    or database insertion errors by indexing conflicts safely.
+    """
     df.columns = [str(c).strip() for c in df.columns]
     seen = {}
     new_cols = []
     for c in df.columns:
-        c_str = str(c).strip()
-        if c_str.lower() == "rate":
-            # Map duplicate or native rate headers safely to avoid database schema conflicts
+        c_lower = c.lower()
+        if c_lower == "rate":
             if "Rate" in seen:
                 seen["Rate"] += 1
                 new_cols.append(f"Raw_Task_Rate_{seen['Rate']}")
@@ -186,12 +189,12 @@ def sanitize_columns(df):
                 seen["Rate"] = 1
                 new_cols.append("Raw_Task_Rate")
         else:
-            if c_str in seen:
-                seen[c_str] += 1
-                new_cols.append(f"{c_str}_{seen[c_str]}")
+            if c in seen:
+                seen[c] += 1
+                new_cols.append(f"{c}_{seen[c]}")
             else:
-                seen[c_str] = 0
-                new_cols.append(c_str)
+                seen[c] = 0
+                new_cols.append(c)
     df.columns = new_cols
     return df
 
