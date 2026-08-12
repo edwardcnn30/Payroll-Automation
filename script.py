@@ -689,12 +689,12 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 display_name = matched_name if matched_name else clean_file_name
                 labor_override = display_name
 
-                # --- EXACT HOSPICE PARSER: TOTAL HOURS & HOURLY RATE MAPPING (DISREGARDING TOTAL PAY) ---
-                rate_hours_list = []
-                mileage_units_list = []
-                prn_amounts_list = []
+                display_lower = display_name.lower()
+                is_brandys_sheet = "brandy" in display_lower
 
-                valid_rates = {22.0, 26.0, 28.0, 30.0, 40.0, 45.0, 50.0, 90.0, 100.0, 185.0}
+                # --- ENHANCED DUAL-EXTRACTION HOSPICE PARSER ---
+                parsed_rows_list = []
+                mileage_units_list = []
 
                 for r_idx in range(len(df_ts)):
                     row_vals = [df_ts.iloc[r_idx, c] for c in range(len(df_ts.columns))]
@@ -704,6 +704,21 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     if "total pay" in row_str or "gross" in row_str or "balance" in row_str:
                         continue
 
+                    # Detect explicit text component if present in row
+                    text_comp = None
+                    if "on call weekday" in row_str or ("on call" in row_str and "weekday" in row_str):
+                        text_comp = "On call Weekdays"
+                    elif "on call weekend" in row_str or ("on call" in row_str and "weekend" in row_str):
+                        text_comp = "On call Weekends"
+                    elif "routine visit" in row_str:
+                        text_comp = "Routine Visit"
+                    elif "start of care" in row_str:
+                        text_comp = "Start of Care"
+                    elif "overtime" in row_str or "ot" in row_str:
+                        text_comp = "Overtime"
+                    elif "hourly" in row_str:
+                        text_comp = "Hourly"
+
                     r_rate = None
                     r_hours = None
 
@@ -712,28 +727,25 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                             s = str(val).replace("$", "").strip()
                             try:
                                 f_val = float(s)
-                                if f_val in valid_rates:
-                                    if r_rate is None:
-                                        r_rate = f_val
+                                if f_val == 0.73:
+                                    mileage_units_list.append(f_val)
+                                elif f_val in [22.0, 26.0, 28.0, 30.0, 40.0, 45.0, 50.0, 90.0, 100.0, 185.0]:
+                                    r_rate = f_val
                                 elif 0 < f_val <= 168.0 and f_val != r_rate:
-                                    if f_val == 0.73:
-                                        mileage_units_list.append(f_val)
-                                    else:
-                                        r_hours = f_val
+                                    r_hours = f_val
                             except:
                                 pass
 
-                    if r_rate is not None and r_hours is not None:
-                        rate_hours_list.append((r_rate, r_hours))
-
-                display_lower = display_name.lower()
-                is_brandys_sheet = "brandy" in display_lower
+                    if r_rate is not None or r_hours is not None or text_comp is not None:
+                        parsed_rows_list.append((text_comp, r_rate, r_hours))
 
                 accumulated_hospice_hours = 0.0
-                for rate, hours in rate_hours_list:
-                    # On call components are dedicated strictly for Brandy; Cooper / Katherine and others use Hourly
+                for text_comp, rate, hours in parsed_rows_list:
+                    # Determine Pay Component
                     if is_brandys_sheet:
-                        if rate == 50.0:
+                        if text_comp:
+                            pay_comp = text_comp
+                        elif rate == 50.0:
                             pay_comp = "On call Weekdays"
                         elif rate == 100.0:
                             pay_comp = "On call Weekends"
@@ -744,67 +756,73 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                         else:
                             pay_comp = "Hourly"
                     else:
-                        pay_comp = "Hourly"
+                        pay_comp = "Hourly" if not text_comp else text_comp
+
+                    if hours is None:
+                        hours = 0.0
+                    if rate is None:
+                        rate = 0.0
 
                     if pay_comp == "Hourly":
-                        if accumulated_hospice_hours < 80:
-                            allowed = 80 - accumulated_hospice_hours
-                            if hours <= allowed:
-                                accumulated_hospice_hours += hours
-                                reg_hrs = hours
-                                ot_hrs = 0.0
+                        if hours > 0:
+                            if accumulated_hospice_hours < 80:
+                                allowed = 80 - accumulated_hospice_hours
+                                if hours <= allowed:
+                                    accumulated_hospice_hours += hours
+                                    reg_hrs = hours
+                                    ot_hrs = 0.0
+                                else:
+                                    reg_hrs = allowed
+                                    ot_hrs = hours - allowed
+                                    accumulated_hospice_hours = 80.0
                             else:
-                                reg_hrs = allowed
-                                ot_hrs = hours - allowed
-                                accumulated_hospice_hours = 80.0
-                        else:
-                            reg_hrs = 0.0
-                            ot_hrs = hours
+                                reg_hrs = 0.0
+                                ot_hrs = hours
 
-                        if reg_hrs > 0:
-                            all_raw_rows.append({
-                                "Review": "✅ Validated",
-                                "Client ID": 16068715,
-                                "Worker ID": formatted_worker_id,
-                                "Org": "",
-                                "Job Number": "",
-                                "Pay Component": "Hourly",
-                                "Rate": rate,
-                                "Rate Number": "",
-                                "Hours": reg_hrs,
-                                "Units": "",
-                                "Line Date": "",
-                                "Amount": "",
-                                "Check Seq Number": "",
-                                "Override State": "",
-                                "Override Local": "",
-                                "Override Local Jurisdiction": "",
-                                "Labor Override": labor_override,
-                                "_EmployeeName": display_name,
-                                "_LOB": "Hospice",
-                            })
-                        if ot_hrs > 0:
-                            all_raw_rows.append({
-                                "Review": "✅ Validated",
-                                "Client ID": 16068715,
-                                "Worker ID": formatted_worker_id,
-                                "Org": "",
-                                "Job Number": "",
-                                "Pay Component": "Overtime",
-                                "Rate": rate,
-                                "Rate Number": "",
-                                "Hours": ot_hrs,
-                                "Units": "",
-                                "Line Date": "",
-                                "Amount": "",
-                                "Check Seq Number": "",
-                                "Override State": "",
-                                "Override Local": "",
-                                "Override Local Jurisdiction": "",
-                                "Labor Override": labor_override,
-                                "_EmployeeName": display_name,
-                                "_LOB": "Hospice",
-                            })
+                            if reg_hrs > 0:
+                                all_raw_rows.append({
+                                    "Review": "✅ Validated",
+                                    "Client ID": 16068715,
+                                    "Worker ID": formatted_worker_id,
+                                    "Org": "",
+                                    "Job Number": "",
+                                    "Pay Component": "Hourly",
+                                    "Rate": rate,
+                                    "Rate Number": "",
+                                    "Hours": reg_hrs,
+                                    "Units": "",
+                                    "Line Date": "",
+                                    "Amount": "",
+                                    "Check Seq Number": "",
+                                    "Override State": "",
+                                    "Override Local": "",
+                                    "Override Local Jurisdiction": "",
+                                    "Labor Override": labor_override,
+                                    "_EmployeeName": display_name,
+                                    "_LOB": "Hospice",
+                                })
+                            if ot_hrs > 0:
+                                all_raw_rows.append({
+                                    "Review": "✅ Validated",
+                                    "Client ID": 16068715,
+                                    "Worker ID": formatted_worker_id,
+                                    "Org": "",
+                                    "Job Number": "",
+                                    "Pay Component": "Overtime",
+                                    "Rate": rate,
+                                    "Rate Number": "",
+                                    "Hours": ot_hrs,
+                                    "Units": "",
+                                    "Line Date": "",
+                                    "Amount": "",
+                                    "Check Seq Number": "",
+                                    "Override State": "",
+                                    "Override Local": "",
+                                    "Override Local Jurisdiction": "",
+                                    "Labor Override": labor_override,
+                                    "_EmployeeName": display_name,
+                                    "_LOB": "Hospice",
+                                })
                     else:
                         all_raw_rows.append({
                             "Review": "✅ Validated",
@@ -813,9 +831,9 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                             "Org": "",
                             "Job Number": "",
                             "Pay Component": pay_comp,
-                            "Rate": rate,
+                            "Rate": rate if rate > 0 else "",
                             "Rate Number": "",
-                            "Hours": hours,
+                            "Hours": hours if hours > 0 else "",
                             "Units": "",
                             "Line Date": "",
                             "Amount": "",
