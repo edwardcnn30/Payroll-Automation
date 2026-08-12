@@ -18,14 +18,14 @@ if "processed_df" not in st.session_state:
 
 def login_screen():
     st.subheader("🔐 Enterprise Payroll Studio - Secure Login")
-    # Refactored: Removed st.form to prevent st.rerun() lifecycle collision crashes
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
 
     if st.button("Sign In"):
         if username and password:
             st.session_state.authenticated = True
-            st.rerun()
+            # Note: Streamlit buttons naturally trigger a script rerun,
+            # so manual st.rerun() has been removed to prevent state crashes.
         else:
             st.error("Please provide valid enterprise credentials.")
 
