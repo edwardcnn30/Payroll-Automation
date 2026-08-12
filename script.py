@@ -20,6 +20,17 @@ if "raw_df" not in st.session_state:
 if "batch_processed_df" not in st.session_state:
     st.session_state.batch_processed_df = None
 
+# --- HARDCODED HOSPICE WORKER IDS ---
+HOSPICE_WORKER_IDS = {
+    "Simowski, Maggie": 1162,
+    "Cecil, Katherine": 1351,
+    "Cooper, Jenifer": 1414,
+    "Smith, Gene": 1175,
+    "Kendle, Alexias B (Brandy)": 1242,
+    "Escobar Ortega, Ana M": 1388,
+    "Bullock, Monica": 1300,
+}
+
 # --- NATIVE SECURE AUTHENTICATION SYSTEM (PERSISTENT) ---
 if not st.session_state["authenticated"]:
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -159,32 +170,30 @@ PAYCHEX_TEMPLATE_COLUMNS = [
 ]
 
 
-# --- HELPER: ENSURE UNIQUE COLUMN NAMES ---
+# --- HELPER: ENSURE UNIQUE COLUMN NAMES (PREVENTS RATE COLLISION) ---
 def sanitize_columns(df):
     df.columns = [str(c).strip() for c in df.columns]
     seen = {}
     new_cols = []
     for c in df.columns:
         c_str = str(c).strip()
-        if c_str in seen:
-            seen[c_str] += 1
-            new_cols.append(f"{c_str}_{seen[c_str]}")
+        if c_str.lower() == "rate":
+            # Map duplicate or native rate headers safely to avoid database schema conflicts
+            if "Rate" in seen:
+                seen["Rate"] += 1
+                new_cols.append(f"Raw_Task_Rate_{seen['Rate']}")
+            else:
+                seen["Rate"] = 1
+                new_cols.append("Raw_Task_Rate")
         else:
-            seen[c_str] = 0
-            new_cols.append(c_str)
+            if c_str in seen:
+                seen[c_str] += 1
+                new_cols.append(f"{c_str}_{seen[c_str]}")
+            else:
+                seen[c_str] = 0
+                new_cols.append(c_str)
     df.columns = new_cols
     return df
-
-
-# --- HELPER: FORMAT NUMBERS TO 2 DECIMAL PLACES ---
-def fmt_val(val, decimals=2):
-    if pd.isnull(val) or val == "":
-        return ""
-    try:
-        f = float(str(val).replace("$", "").replace(",", "").strip())
-        return round(f, decimals)
-    except:
-        return val
 
 
 # --- HELPER: STANDARD HOME HEALTH TASK & AMOUNT EXTRACTION ---
@@ -208,7 +217,12 @@ def extract_home_health_tasks(df, id_col, name_col):
                                                                                              1).isdigit() else emp_id_raw
         except:
             emp_id = emp_id_raw
-        formatted_worker_id = int(emp_id) if isinstance(emp_id, float) and emp_id.is_integer() else emp_id
+
+        emp_name_str = str(emp_name).strip()
+        if emp_name_str in HOSPICE_WORKER_IDS:
+            formatted_worker_id = HOSPICE_WORKER_IDS[emp_name_str]
+        else:
+            formatted_worker_id = int(emp_id) if isinstance(emp_id, float) and emp_id.is_integer() else emp_id
 
         for _, row in group.iterrows():
             task_name = str(row.get(task_col, "")) if task_col and pd.notnull(row.get(task_col)) else ""
@@ -247,8 +261,8 @@ def extract_home_health_tasks(df, id_col, name_col):
                 if total_item_amt > 0:
                     results.append({
                         "emp_id": formatted_worker_id,
-                        "emp_name": str(emp_name).strip(),
-                        "emp_name_lower": str(emp_name).strip().lower(),
+                        "emp_name": emp_name_str,
+                        "emp_name_lower": emp_name_str.lower(),
                         "task": task_name,
                         "amount": round(total_item_amt, 2)
                     })
@@ -393,17 +407,22 @@ def process_home_health_payroll(df, hospice_employee_names=None):
         except:
             emp_id = emp_id_raw
 
-        formatted_worker_id = int(emp_id) if isinstance(emp_id, float) and emp_id.is_integer() else emp_id
-        labor_override = str(emp_name).strip() if emp_name and str(emp_name).lower() != "nan" else str(
-            formatted_worker_id)
+        emp_name_str = str(emp_name).strip()
+        if emp_name_str in HOSPICE_WORKER_IDS:
+            formatted_worker_id = HOSPICE_WORKER_IDS[emp_name_str]
+        else:
+            formatted_worker_id = int(emp_id) if isinstance(emp_id, float) and emp_id.is_integer() else emp_id
+
+        labor_override = emp_name_str if emp_name_str and emp_name_str.lower() != "nan" else str(formatted_worker_id)
         emp_name_lower = labor_override.lower()
 
-        is_hospice_staff = any(h_name in emp_name_lower for h_name in hospice_employee_names)
+        is_hospice_staff = any(
+            h_name in emp_name_lower for h_name in hospice_employee_names) or emp_name_str in HOSPICE_WORKER_IDS
 
         total_employee_hours = 0.0
         total_employee_mileage = 0.0
         applied_rate = 0.0
-        is_hourly_emp = emp_id in hourly_rates
+        is_hourly_emp = formatted_worker_id in hourly_rates or emp_id in hourly_rates
 
         for _, row in group.iterrows():
             hours = float(row.get(hours_col, 0)) if pd.notnull(row.get(hours_col)) and str(row.get(hours_col)).replace(
@@ -413,7 +432,7 @@ def process_home_health_payroll(df, hospice_employee_names=None):
             total_employee_mileage += mileage
 
             if is_hourly_emp:
-                applied_rate = hourly_rates[emp_id]
+                applied_rate = hourly_rates.get(formatted_worker_id, hourly_rates.get(emp_id, 0.0))
                 total_employee_hours += hours
 
         if is_hourly_emp and not is_hospice_staff and total_employee_hours > 0:
@@ -460,7 +479,7 @@ def process_home_health_payroll(df, hospice_employee_names=None):
                     raw_rows.append({
                         "Review": "✅ Validated",
                         "Client ID": 16068715,
-                        "Worker ID": formatted_worker_id,
+                        "Worker ID": item["emp_id"],
                         "Org": "",
                         "Job Number": "",
                         "Pay Component": "PRN Points",
@@ -474,8 +493,8 @@ def process_home_health_payroll(df, hospice_employee_names=None):
                         "Override State": "",
                         "Override Local": "",
                         "Override Local Jurisdiction": "",
-                        "Labor Override": labor_override,
-                        "_EmployeeName": emp_name,
+                        "Labor Override": item["emp_name"],
+                        "_EmployeeName": item["emp_name"],
                         "_LOB": "Home Health",
                     })
 
@@ -532,8 +551,13 @@ def process_home_care_payroll(df):
         accumulated_hours = 0.0
         mileage_units = 0.0
 
-        formatted_worker_id = int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace(".", "",
-                                                                                                 1).isdigit() else worker_id
+        emp_name_str = str(emp_name).strip()
+        if emp_name_str in HOSPICE_WORKER_IDS:
+            formatted_worker_id = HOSPICE_WORKER_IDS[emp_name_str]
+        else:
+            formatted_worker_id = int(worker_id) if pd.notnull(worker_id) and str(worker_id).replace(".", "",
+                                                                                                     1).isdigit() else worker_id
+
         labor_override = formatted_worker_id
 
         for _, row in group.iterrows():
@@ -640,8 +664,8 @@ def process_home_care_payroll(df):
 
 
 def process_hospice_reconciliation(hh_file, timesheet_files):
-    id_mapping = {}
-    name_mapping = {}
+    id_mapping = HOSPICE_WORKER_IDS.copy()
+    name_mapping = {v: k for k, v in HOSPICE_WORKER_IDS.items()}
     prn_points_by_employee = {}
 
     if hh_file is not None:
@@ -669,13 +693,18 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 emp_name_lower = emp_name.lower()
                 emp_id = row.get(id_col)
 
-                if emp_name and pd.notnull(emp_id):
+                if emp_name in HOSPICE_WORKER_IDS:
+                    formatted_id = HOSPICE_WORKER_IDS[emp_name]
+                elif pd.notnull(emp_id):
                     try:
                         formatted_id = int(emp_id) if isinstance(emp_id, float) and emp_id.is_integer() else emp_id
                     except:
                         formatted_id = emp_id
-                    id_mapping[emp_name_lower] = formatted_id
-                    name_mapping[formatted_id] = emp_name
+                else:
+                    continue
+
+                id_mapping[emp_name_lower] = formatted_id
+                name_mapping[formatted_id] = emp_name
 
             task_col = next((c for c in hh_df.columns if
                              any(k in c.lower() for k in ["task", "visit", "service", "description", "type"])), None)
@@ -684,14 +713,18 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
             grouped = hh_df.groupby([id_col, hh_df[name_col].astype(str)], dropna=False)
             for (emp_id_raw, emp_name), group in grouped:
-                try:
-                    emp_id = float(emp_id_raw) if pd.notnull(emp_id_raw) and str(emp_id_raw).replace(".", "",
-                                                                                                     1).isdigit() else emp_id_raw
-                except:
-                    emp_id = emp_id_raw
-                formatted_worker_id = int(emp_id) if isinstance(emp_id, float) and emp_id.is_integer() else emp_id
                 emp_name_str = str(emp_name).strip()
                 emp_name_lower = emp_name_str.lower()
+
+                if emp_name_str in HOSPICE_WORKER_IDS:
+                    formatted_worker_id = HOSPICE_WORKER_IDS[emp_name_str]
+                else:
+                    try:
+                        formatted_worker_id = int(emp_id_raw) if pd.notnull(emp_id_raw) and str(emp_id_raw).replace(".",
+                                                                                                                    "",
+                                                                                                                    1).isdigit() else emp_id_raw
+                    except:
+                        formatted_worker_id = emp_id_raw
 
                 for _, row in group.iterrows():
                     task_name = str(row.get(task_col, "")) if task_col and pd.notnull(row.get(task_col)) else ""
@@ -772,30 +805,26 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                         return None, ""
                     target_lower = str(search_target).lower()
 
+                    for k, v in HOSPICE_WORKER_IDS.items():
+                        if k.lower() in target_lower or target_lower in k.lower():
+                            return v, k
+
                     for k, v in id_mapping.items():
                         if k in target_lower or target_lower in k:
-                            return v, name_mapping.get(v, k.title())
+                            return v, name_mapping.get(v, str(k).title())
 
-                    target_tokens = set(re.findall(r'\b[a-z]{3,}\b', target_lower))
-                    best_id = None
-                    best_name = ""
-                    max_overlap = 0
-
-                    for k, v in id_mapping.items():
-                        key_tokens = set(re.findall(r'\b[a-z]{3,}\b', k))
-                        overlap = len(target_tokens.intersection(key_tokens))
-                        if overlap > max_overlap:
-                            max_overlap = overlap
-                            best_id = v
-                            best_name = name_mapping.get(v, k.title())
-
-                    if max_overlap > 0:
-                        return best_id, best_name
                     return None, ""
 
                 worker_id, matched_name = resolve_worker_id(found_name_in_cells)
                 if not worker_id:
                     worker_id, matched_name = resolve_worker_id(clean_file_name)
+
+                if not worker_id:
+                    for hospice_name, hid in HOSPICE_WORKER_IDS.items():
+                        if hospice_name.lower() in clean_file_name.lower() or clean_file_name.lower() in hospice_name.lower():
+                            worker_id = hid
+                            matched_name = hospice_name
+                            break
 
                 if not worker_id:
                     worker_id = 349
@@ -1156,7 +1185,7 @@ elif current_tab == "Multi-LOB Batch":
     ):
         all_batch_rows = []
 
-        hospice_names = set()
+        hospice_names = set(HOSPICE_WORKER_IDS.keys())
         if hospice_batch_files:
             for f in hospice_batch_files:
                 base = f.name.split(".")[0]
