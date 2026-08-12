@@ -18,16 +18,16 @@ if "processed_df" not in st.session_state:
 
 def login_screen():
     st.subheader("🔐 Enterprise Payroll Studio - Secure Login")
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submit = st.form_submit_button("Sign In")
-        if submit:
-            if username and password:
-                st.session_state.authenticated = True
-                st.rerun()
-            else:
-                st.error("Please provide valid enterprise credentials.")
+    # Refactored: Removed st.form to prevent st.rerun() lifecycle collision crashes
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+
+    if st.button("Sign In"):
+        if username and password:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Please provide valid enterprise credentials.")
 
 
 if not st.session_state.authenticated:
@@ -113,7 +113,7 @@ def process_home_health_standalone(df):
                     try:
                         item_amt = float(str(row.get(rate_col)).replace("$", "").replace(",", "").strip())
                     except:
-                        pass
+                        item_amt = 0.0
                 if item_amt > 0:
                     total_prn_amount += item_amt
 
