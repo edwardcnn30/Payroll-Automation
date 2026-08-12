@@ -628,6 +628,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
             st.error(f"Error reading HH master for hospice: {e}")
 
     all_raw_rows = []
+    processed_workers_for_prn = set()
 
     if timesheet_files:
         for ts_file in timesheet_files:
@@ -755,10 +756,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     if hrs == 0 and rate == 0:
                         continue
 
-                    # Component Classification Logic:
-                    # 1. Rate 0.73 -> MILEAGE REIMB
-                    # 2. Maggie does NOT do on-call (Rate 50.0 or 100.0 for Maggie is tagged as Hourly)
-                    # 3. Brandy & Cooper route rate 50.0 to On call Weekdays and 100.0 to On call Weekends
                     if rate == 0.73:
                         pay_comp = "MILEAGE REIMB"
                         units_val = hrs if hrs > 0 else 1.0
@@ -858,16 +855,18 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                             "_LOB": "Hospice",
                         })
 
-                # Append PRN Points for Brandy Kendle / matching employees from Home Health master
+                # --- FIXED PRN INJECTION: Deduplicated globally per employee to prevent 365 inflation ---
                 matched_prn_keys = [k for k in prn_points_by_employee.keys() if
-                                    k in display_lower or display_lower in k or "brandy" in display_lower]
+                                    k in display_lower or display_lower in k]
                 for pk in matched_prn_keys:
-                    for prn_row in prn_points_by_employee[pk]:
-                        prn_row_copy = prn_row.copy()
-                        prn_row_copy["Worker ID"] = formatted_worker_id
-                        prn_row_copy["Labor Override"] = display_name
-                        prn_row_copy["_EmployeeName"] = display_name
-                        all_raw_rows.append(prn_row_copy)
+                    if pk not in processed_workers_for_prn:
+                        processed_workers_for_prn.add(pk)
+                        for prn_row in prn_points_by_employee[pk]:
+                            prn_row_copy = prn_row.copy()
+                            prn_row_copy["Worker ID"] = formatted_worker_id
+                            prn_row_copy["Labor Override"] = display_name
+                            prn_row_copy["_EmployeeName"] = display_name
+                            all_raw_rows.append(prn_row_copy)
 
             except Exception as e:
                 st.error(f"Error processing hospice timesheet {ts_file.name}: {e}")
