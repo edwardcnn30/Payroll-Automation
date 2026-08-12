@@ -170,12 +170,8 @@ PAYCHEX_TEMPLATE_COLUMNS = [
 ]
 
 
-# --- HELPER: ROBUST COLUMN SANITIZATION (PREVENTS 'Rate' COLLISION) ---
+# --- HELPER: ROBUST COLUMN SANITIZATION ---
 def sanitize_columns(df):
-    """
-    Sanitizes column names to strip whitespaces and prevent duplicate 'Rate'
-    or database insertion errors by indexing conflicts safely.
-    """
     new_cols = []
     seen = {}
     for c in df.columns:
@@ -272,7 +268,7 @@ def extract_home_health_tasks(df, id_col, name_col):
     return results
 
 
-# --- HELPER: NORMALIZE & AGGREGATE DATAFRAME WITH 2-DECIMAL PRECISION ---
+# --- HELPER: NORMALIZE & AGGREGATE DATAFRAME (FIXED FOR AS_INDEX=FALSE) ---
 def aggregate_and_standardize(df_rows):
     if not df_rows:
         empty_df = pd.DataFrame(columns=PAYCHEX_TEMPLATE_COLUMNS)
@@ -312,18 +308,22 @@ def aggregate_and_standardize(df_rows):
     if "_LOB" in temp_df.columns:
         group_cols.append("_LOB")
 
-    agg_df = (
-        temp_df.groupby(
-            [c for c in group_cols if c in temp_df.columns], dropna=False
-        )
-        .agg({"Hours": "sum", "Units": "sum", "Amount": "sum", "Rate": "first"})
-        .reset_index()
-    )
+    active_group_cols = [c for c in group_cols if c in temp_df.columns]
+    agg_dict = {"Hours": "sum", "Units": "sum", "Amount": "sum"}
+
+    # FIX APPLIED HERE: using as_index=False avoids index column re-insertion collisions ('cannot insert Rate, already exists')
+    if active_group_cols:
+        agg_df = temp_df.groupby(active_group_cols, as_index=False, dropna=False).agg(agg_dict)
+        if "Rate" not in active_group_cols and "Rate" in temp_df.columns:
+            agg_df["Rate"] = temp_df.groupby(active_group_cols, dropna=False)["Rate"].first().values
+    else:
+        agg_df = temp_df.agg({**agg_dict, "Rate": "first"}).to_frame().T
 
     agg_df["Hours"] = agg_df["Hours"].apply(lambda x: round(x, 2) if x > 0 else "")
     agg_df["Units"] = agg_df["Units"].apply(lambda x: round(x, 2) if x > 0 else "")
     agg_df["Amount"] = agg_df["Amount"].apply(lambda x: round(x, 2) if x > 0 else "")
-    agg_df["Rate"] = agg_df["Rate"].apply(lambda x: round(x, 2) if x > 0 else "")
+    agg_df["Rate"] = agg_df["Rate"].apply(
+        lambda x: round(x, 2) if pd.notnull(x) and str(x).replace(".", "", 1).isdigit() and float(x) > 0 else "")
 
     def assign_comp_rank(row):
         comp = str(row.get("Pay Component", ""))
@@ -380,6 +380,7 @@ def process_home_health_payroll(df, hospice_employee_names=None):
 
     name_col = df.columns[3] if len(df.columns) > 3 else df.columns[0]
     id_col = df.columns[4] if len(df.columns) > 4 else (df.columns[1] if len(df.columns) > 1 else df.columns[0])
+    rate_col = next((c for c in df.columns if any(k in c.lower() for k in ["rate", "pay rate"])), None)
 
     hours_col = next(
         (c for c in df.columns if "hour" in c.lower()), "Hours" if "Hours" in df.columns else df.columns[-1]
@@ -434,8 +435,17 @@ def process_home_health_payroll(df, hospice_employee_names=None):
                 row.get("Mileage")).replace(".", "", 1).isdigit() else 0.0
             total_employee_mileage += mileage
 
+            if rate_col and pd.notnull(row.get(rate_col)):
+                try:
+                    r_val = float(str(row.get(rate_col)).replace("$", "").replace(",", "").strip())
+                    if r_val > 0:
+                        applied_rate = r_val
+                except:
+                    pass
+
             if is_hourly_emp:
-                applied_rate = hourly_rates.get(formatted_worker_id, hourly_rates.get(emp_id, 0.0))
+                if applied_rate == 0:
+                    applied_rate = hourly_rates.get(formatted_worker_id, hourly_rates.get(emp_id, 0.0))
                 total_employee_hours += hours
 
         if is_hourly_emp and not is_hospice_staff and total_employee_hours > 0:
