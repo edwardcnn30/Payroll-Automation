@@ -176,6 +176,59 @@ def sanitize_columns(df):
     return df
 
 
+# --- HELPER: ROBUST TASK & AMOUNT PARSER FOR PRN / VISIT STAFF ---
+def extract_task_amounts_for_df(df, id_col, name_col):
+    df = sanitize_columns(df)
+    task_col = next(
+        (c for c in df.columns if any(k in c.lower() for k in ["task", "visit", "service", "description", "type"])),
+        None)
+    amt_col = next(
+        (c for c in df.columns if any(k in c.lower() for k in ["amount", "rate", "total", "charge", "price", "fee"])),
+        None)
+
+    results = []
+    grouped = df.groupby([id_col, df[name_col].astype(str)], dropna=False)
+    for (emp_id_raw, emp_name), group in grouped:
+        try:
+            emp_id = float(emp_id_raw) if pd.notnull(emp_id_raw) and str(emp_id_raw).replace(".", "",
+                                                                                             1).isdigit() else emp_id_raw
+        except:
+            emp_id = emp_id_raw
+        formatted_worker_id = int(emp_id) if isinstance(emp_id, float) and emp_id.is_integer() else emp_id
+
+        for _, row in group.iterrows():
+            amt = 0.0
+            if amt_col and pd.notnull(row.get(amt_col)):
+                s = str(row.get(amt_col)).replace("$", "").replace(",", "").strip()
+                try:
+                    amt = float(s)
+                except:
+                    amt = 0.0
+            else:
+                for c in df.columns:
+                    if c not in [id_col, name_col]:
+                        val = row.get(c)
+                        if pd.notnull(val):
+                            s = str(val).replace("$", "").replace(",", "").strip()
+                            try:
+                                f = float(s)
+                                if 0 < f < 10000:
+                                    amt = f
+                                    break
+                            except:
+                                pass
+            if amt > 0:
+                task_name = str(row.get(task_col, "")) if task_col and pd.notnull(row.get(task_col)) else ""
+                results.append({
+                    "emp_id": formatted_worker_id,
+                    "emp_name": str(emp_name).strip(),
+                    "emp_name_lower": str(emp_name).strip().lower(),
+                    "task": task_name,
+                    "amount": amt
+                })
+    return results
+
+
 # --- HELPER: NORMALIZE & AGGREGATE DATAFRAME WITH CUSTOM HIERARCHY ---
 def aggregate_and_standardize(df_rows):
     if not df_rows:
@@ -318,8 +371,8 @@ def process_home_health_payroll(df, hospice_employee_names=None):
 
         total_employee_hours = 0.0
         total_employee_mileage = 0.0
-        prn_rows_for_emp = []
         applied_rate = 0.0
+        is_hourly_emp = emp_id in hourly_rates
 
         for _, row in group.iterrows():
             hours = float(row.get(hours_col, 0)) if pd.notnull(row.get(hours_col)) and str(row.get(hours_col)).replace(
@@ -328,39 +381,11 @@ def process_home_health_payroll(df, hospice_employee_names=None):
                 row.get("Mileage")).replace(".", "", 1).isdigit() else 0.0
             total_employee_mileage += mileage
 
-            if emp_id in hourly_rates:
+            if is_hourly_emp:
                 applied_rate = hourly_rates[emp_id]
                 total_employee_hours += hours
-            else:
-                rate = float(row.get("Rate", 0)) if pd.notnull(row.get("Rate")) and str(row.get("Rate")).replace(".",
-                                                                                                                 "",
-                                                                                                                 1).isdigit() else 0.0
-                amount = float(row.get("Amount", 0)) if pd.notnull(row.get("Amount")) and str(
-                    row.get("Amount")).replace(".", "", 1).isdigit() else 0.0
-                if amount > 0 or rate > 0:
-                    prn_rows_for_emp.append({
-                        "Review": "✅ Validated",
-                        "Client ID": 16068715,
-                        "Worker ID": formatted_worker_id,
-                        "Org": "",
-                        "Job Number": "",
-                        "Pay Component": "PRN Points",
-                        "Rate": "",
-                        "Rate Number": "",
-                        "Hours": "",
-                        "Units": "",
-                        "Line Date": "",
-                        "Amount": amount,
-                        "Check Seq Number": "",
-                        "Override State": "",
-                        "Override Local": "",
-                        "Override Local Jurisdiction": "",
-                        "Labor Override": labor_override,
-                        "_EmployeeName": emp_name,
-                        "_LOB": "Home Health",
-                    })
 
-        if not is_hospice_staff and emp_id in hourly_rates and total_employee_hours > 0:
+        if is_hourly_emp and not is_hospice_staff and total_employee_hours > 0:
             base_item = {
                 "Review": "✅ Validated",
                 "Client ID": 16068715,
@@ -397,8 +422,31 @@ def process_home_health_payroll(df, hospice_employee_names=None):
                 reg_item["Hours"] = total_employee_hours
                 raw_rows.append(reg_item)
 
-        for prn_r in prn_rows_for_emp:
-            raw_rows.append(prn_r)
+        if not is_hourly_emp and not is_hospice_staff:
+            task_items = extract_task_amounts_for_df(group, id_col, name_col)
+            for item in task_items:
+                if item["amount"] > 0:
+                    raw_rows.append({
+                        "Review": "✅ Validated",
+                        "Client ID": 16068715,
+                        "Worker ID": formatted_worker_id,
+                        "Org": "",
+                        "Job Number": "",
+                        "Pay Component": "PRN Points",
+                        "Rate": "",
+                        "Rate Number": "",
+                        "Hours": "",
+                        "Units": "",
+                        "Line Date": "",
+                        "Amount": item["amount"],
+                        "Check Seq Number": "",
+                        "Override State": "",
+                        "Override Local": "",
+                        "Override Local Jurisdiction": "",
+                        "Labor Override": labor_override,
+                        "_EmployeeName": emp_name,
+                        "_LOB": "Home Health",
+                    })
 
         if total_employee_mileage > 0 and not is_hospice_staff:
             raw_rows.append({
@@ -598,15 +646,16 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     id_mapping[emp_name_lower] = formatted_id
                     name_mapping[formatted_id] = emp_name
 
-                amount_val = float(row.get("Amount", 0)) if pd.notnull(row.get("Amount")) and str(
-                    row.get("Amount")).replace(".", "", 1).isdigit() else 0.0
-                if amount_val > 0 and emp_name_lower:
+            task_entries = extract_task_amounts_for_df(hh_df, id_col, name_col)
+            for entry in task_entries:
+                emp_name_lower = entry["emp_name_lower"]
+                if entry["amount"] > 0 and emp_name_lower:
                     if emp_name_lower not in prn_points_by_employee:
                         prn_points_by_employee[emp_name_lower] = []
                     prn_points_by_employee[emp_name_lower].append({
                         "Review": "✅ Validated",
                         "Client ID": 16068715,
-                        "Worker ID": formatted_id if 'formatted_id' in locals() else emp_id,
+                        "Worker ID": entry["emp_id"],
                         "Org": "",
                         "Job Number": "",
                         "Pay Component": "PRN Points",
@@ -615,13 +664,13 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                         "Hours": "",
                         "Units": "",
                         "Line Date": "",
-                        "Amount": amount_val,
+                        "Amount": entry["amount"],
                         "Check Seq Number": "",
                         "Override State": "",
                         "Override Local": "",
                         "Override Local Jurisdiction": "",
-                        "Labor Override": emp_name,
-                        "_EmployeeName": emp_name,
+                        "Labor Override": entry["emp_name"],
+                        "_EmployeeName": entry["emp_name"],
                         "_LOB": "Hospice",
                     })
         except Exception as e:
@@ -691,7 +740,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                 labor_override = display_name
                 display_lower = display_name.lower()
 
-                # --- AUDITED VERTICAL HOSPICE GRID PARSER ---
                 hours_row_idx = -1
                 rate_row_idx = -1
 
@@ -855,7 +903,6 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                             "_LOB": "Hospice",
                         })
 
-                # --- ELITE WORKER-ID DEDUPLICATION GUARD FOR PRN POINTS ---
                 matched_prn_keys = [k for k in prn_points_by_employee.keys() if
                                     k in display_lower or display_lower in k]
                 if matched_prn_keys and formatted_worker_id not in processed_workers_for_prn:
