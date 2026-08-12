@@ -1,54 +1,47 @@
 import io
 import re
-import bcrypt
 import pandas as pd
 import streamlit as st
-import streamlit_authenticator as stauth
 
 # Page Configuration
 st.set_page_config(
     page_title="Payroll Studio Enterprise", page_icon="💼", layout="wide"
 )
 
-# --- DYNAMIC CREDENTIALS & AUTHENTICATOR SETUP ---
-# Generate a secure bcrypt hash for password '123' dynamically to prevent version errors
-hashed_password = bcrypt.hashpw("123".encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+# --- NATIVE SECURE AUTHENTICATION SYSTEM (BLANK FIELDS) ---
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+if "name" not in st.session_state:
+    st.session_state["name"] = "Mark Edward Cunanan"
 
-credentials = {
-    "usernames": {
-        "admin": {
-            "email": "admin@payrollstudio.com",
-            "name": "Administrator",
-            "password": hashed_password,
-        }
-    }
-}
+if not st.session_state["authenticated"]:
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        st.markdown("## 🔐 Payroll Studio Enterprise")
+        st.markdown("Please log in with your credentials to access the system.")
 
-authenticator = stauth.Authenticate(
-    credentials,
-    "payroll_studio_auth",
-    "random_signature_key_here",
-    expiry_days=30,
-)
+        with st.form("login_form"):
+            username_input = st.text_input("Username")
+            password_input = st.text_input("Password", type="password")
+            submit_btn = st.form_submit_button("Login", use_container_width=True)
 
-# Render login widget in the main page area
-authenticator.login(location="main")
-
-# --- AUTHENTICATION ENFORCEMENT ---
-if st.session_state["authentication_status"] == False:
-    st.error("Invalid username or password. Please try again.")
-    st.stop()
-elif st.session_state["authentication_status"] is None:
-    st.warning("Please log in using your credentials to access Payroll Studio Enterprise.")
+            if submit_btn:
+                if username_input == "edwardcnn30" and password_input == "Happyhere.2330":
+                    st.session_state["authenticated"] = True
+                    st.session_state["name"] = "Mark Edward Cunanan"
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password. Please try again.")
     st.stop()
 
-# --- IF LOGGED IN, PROCEED WITH FULL APP ---
-
-# Secure Logout Button in Sidebar & Welcome Header
+# --- SIDEBAR & LOGOUT CONTROLS ---
 with st.sidebar:
     st.markdown(f"Welcome back, **{st.session_state['name']}**! 👋")
     st.markdown("---")
-    authenticator.logout("Logout", "sidebar")
+    if st.button("🚪 Logout", use_container_width=True):
+        st.session_state["authenticated"] = False
+        st.rerun()
     st.markdown("---")
     st.markdown("### Navigation Control")
 
@@ -524,6 +517,16 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
 
     all_reconciled_rows = []
 
+    brandy_rate_component_map = {
+        80.00: "Hourly",
+        50.00: "On call Weekdays",
+        100.00: "On call Weekends",
+        90.00: "Routine Visit",
+        45.00: "Hourly",
+        185.00: "Start of Care",
+        10.00: "Hourly"
+    }
+
     for ts_file in timesheet_files:
         try:
             xls = pd.ExcelFile(ts_file)
@@ -628,14 +631,22 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                                                                                                      1).isdigit() else worker_id
             labor_override = f"{display_name} - {formatted_worker_id} ({formatted_worker_id})" if formatted_worker_id else display_name
 
+            is_brandy = (formatted_worker_id == 1242) or ("brandy" in str(matched_key).lower()) or (
+                        "kendle" in str(matched_key).lower())
+
             for rate, hours in rate_hours_list:
+                if is_brandy and rate in brandy_rate_component_map:
+                    pay_comp = brandy_rate_component_map[rate]
+                else:
+                    pay_comp = "Hourly"
+
                 base_item = {
                     "Review": "✅ Validated",
                     "Client ID": 16068715,
                     "Worker ID": formatted_worker_id,
                     "Org": "",
                     "Job Num": "",
-                    "Pay Component": "Hourly",
+                    "Pay Component": pay_comp,
                     "Rate": rate,
                     "Hours": hours,
                     "Units": "",
@@ -647,7 +658,7 @@ def process_hospice_reconciliation(hh_file, timesheet_files):
                     "Labor Override": labor_override,
                 }
 
-                if total_worker_hours > 80:
+                if pay_comp == "Hourly" and total_worker_hours > 80:
                     if accumulated_hours < 80:
                         allowed = 80 - accumulated_hours
                         if hours <= allowed:
@@ -861,7 +872,7 @@ elif current_tab == "Upload Data":
 elif current_tab == "Multi-LOB Batch":
     st.markdown("### ⚡ Enterprise Multi-LOB Batch Processing Pipeline")
     st.write(
-        "Upload all departmental files simultaneously. Hospice reconciliation will filter out duplicate hourly entries from the Home Health master file while **retaining PRN Points (such as MSW task amounts for Maggie Simowski and others)**.")
+        "Upload all departmental files simultaneously. Hospice reconciliation will filter out duplicate hourly entries from the Home Health master file while **retaining PRN Points**.")
 
     col_b1, col_b2, col_b3 = st.columns(3)
     with col_b1:
@@ -913,8 +924,9 @@ elif current_tab == "Multi-LOB Batch":
                 if batch_hc_file.name.endswith(".csv"):
                     hc_raw = pd.read_csv(batch_hc_file)
                 else:
-                    xls = pd.ExcelFile(batch_hc_file)
-                    hc_raw = pd.read_excel(xls, sheet_name=xls.sheet_names[0])
+                    xls_hc = pd.ExcelFile(batch_hc_file)
+                    hc_sheet = xls_hc.sheet_names[0]
+                    hc_raw = pd.read_excel(xls_hc, sheet_name=hc_sheet)
                 hc_processed = process_home_care_payroll(hc_raw)
                 if not hc_processed.empty:
                     hc_processed["LOB"] = "Home Care"
@@ -926,7 +938,7 @@ elif current_tab == "Multi-LOB Batch":
                 st.session_state.processed_df = final_batch_df
 
                 st.success(
-                    "Enterprise batch processing completed successfully with PRN Points and Hospice reconciliation fully aligned!")
+                    "Enterprise batch processing completed successfully with Brandy Kendle's rate-to-component mappings and reconciliation fully aligned!")
 
                 st.markdown("### 🔍 Consolidated Batch Output Preview")
                 st.dataframe(final_batch_df, use_container_width=True)
@@ -1020,9 +1032,10 @@ elif current_tab == "Developer Support":
     st.markdown("## 🛠️ Developer & Compliance Support")
     st.write("System status, error logs, and regulatory rule sets active in Payroll Studio Enterprise.")
     st.json({
-        "Authentication Module": "Streamlit-Authenticator (Bcrypt Hashing)",
+        "Authentication Module": "Native Streamlit Session Auth - edwardcnn30",
         "Overtime Policy": "80-hour threshold weekly standard split",
         "Mileage Rate": "0.73 Standard IRS/Client Reimb",
         "Supported LOBs": ["Home Health", "Home Care", "Hospice Reconciliation"],
+        "Custom Rules": ["Brandy Kendle (ID 1242) Rate-to-Component Mapping"],
         "Active Session": st.session_state.get("name", "Unknown")
     })
